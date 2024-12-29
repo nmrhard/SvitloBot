@@ -181,7 +181,7 @@ fastify.get('/', async (request, reply) => {
   try {
     await sequelize.sync();
     fastify.log.info('Database synced');
-    await fastify.listen({ port: PORT });
+    await fastify.listen({ port: PORT, host: '0.0.0.0' });
     fastify.log.info('Server running on http://localhost:3000');
   } catch (err) {
     fastify.log.error(err);
