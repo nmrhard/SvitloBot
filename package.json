@@ -9,7 +9,10 @@
   "author": "Roman Lytvynov",
   "license": "ISC",
   "dependencies": {
-    "aws-lambda-fastify": "^2.2.0",
-    "fastify": "^5.1.0"
+    "dotenv": "^16.4.7",
+    "fastify": "^5.1.0",
+    "node-fetch": "^2.7.0",
+    "sequelize": "^6.37.5",
+    "sqlite3": "^5.1.7"
   }
 }
