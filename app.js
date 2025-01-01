@@ -70,6 +70,12 @@ function calculateDuration(startTime, endTime) {
   return `${hours}г. ${minutes}хв.`;
 }
 
+function getDurationMessage(status, duration) {
+  return status === 'offline'
+    ? `⏳Cвітло було: <b>${duration}</b>`
+    : `⏳Cвітло не було: <b>${duration}</b>`;
+}
+
 // Send message to Telegram
 async function sendMessage(message) {
   try {
@@ -134,7 +140,7 @@ fastify.post(
         );
         message = `${statuses[status]}: <b>${formatTime(
           currentTime
-        )}</b>\n⏳Cвітло було: <b>${onlineDuration}</b>`;
+        )}</b>\n${getDurationMessage('offline', onlineDuration)}`;
       } else {
         message = `${statuses[status]}: <b>${formatTime(currentTime)}</b>`;
       }
@@ -153,7 +159,7 @@ fastify.post(
         );
         message = `${statuses[status]}: <b>${formatTime(
           currentTime
-        )}</b>\n⏳Cвітло не було: <b>${offlineDuration}</b>`;
+        )}</b>\n${getDurationMessage('online', offlineDuration)}`;
       } else {
         message = `${statuses[status]}: <b>${formatTime(currentTime)}</b>`;
       }
