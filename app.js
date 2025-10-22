@@ -100,6 +100,8 @@ async function sendMessage(message) {
   }
 }
 
+// curl -X POST -H "Content-Type: application/json" -d '{"monitor_status": "offline", "timestamp": 1729699200}' http://localhost:3000
+
 // Route to handle POST requests from Hetrix
 fastify.post(
   '/',
@@ -132,6 +134,7 @@ fastify.post(
     }
 
     if (status === 'offline') {
+      console.log('status record offline', statusRecord);
       if (statusRecord.onlineStart) {
         // Calculate online duration if transitioning from online to offline
         const onlineDuration = calculateDuration(
@@ -151,6 +154,7 @@ fastify.post(
         onlineStart: null,
       });
     } else if (status === 'online') {
+      console.log('status record online', statusRecord);
       if (statusRecord.offlineStart) {
         // Calculate offline duration if transitioning from offline to online
         const offlineDuration = calculateDuration(
