@@ -20,9 +20,16 @@ const THREAD_ID = process.env.THREAD_ID;
 const tgBotUrl = `https://api.telegram.org/bot${API_TOKEN}`;
 
 // Configure Sequelize
-const sequelize = new Sequelize({
-  dialect: 'sqlite',
-  storage: 'offline_status.db',
+const sequelize = new Sequelize(process.env.DATABASE_URL, {
+  dialect: 'postgres',
+  dialectModule: require('pg'),
+  logging: false,
+  dialectOptions: {
+    ssl: {
+      require: true,
+      rejectUnauthorized: false,
+    },
+  },
 });
 
 // Define Model for storing timestamps
