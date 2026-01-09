@@ -1,6 +1,38 @@
-import { beforeAll, afterAll, describe, expect, it, vi } from 'vitest';
+import {
+  beforeAll,
+  afterAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 
-// Mock external dependencies before importing app
+// Set required env vars BEFORE any imports
+process.env.CHAT_ID = 'test-chat-id';
+process.env.API_TOKEN = 'test-token';
+process.env.THREAD_ID = 'test-thread-id';
+process.env.DATABASE_URL = 'postgres://localhost:5432/test';
+
+// Mock sequelize to prevent real DB connection
+vi.mock('sequelize', () => {
+  const mockModel = {
+    findByPk: vi.fn(),
+    create: vi.fn(),
+  };
+  return {
+    Sequelize: vi.fn(() => ({
+      sync: vi.fn(() => Promise.resolve()),
+      define: vi.fn(() => mockModel),
+    })),
+    DataTypes: {
+      INTEGER: 'INTEGER',
+      STRING: 'STRING',
+    },
+  };
+});
+
+// Mock external dependencies
 vi.mock('node-fetch', () => ({
   default: vi.fn(() =>
     Promise.resolve({
@@ -10,16 +42,7 @@ vi.mock('node-fetch', () => ({
   ),
 }));
 
-vi.mock('../../config/database', () => ({
-  default: {
-    sync: vi.fn(() => Promise.resolve()),
-    define: vi.fn(() => ({
-      findByPk: vi.fn(),
-      create: vi.fn(),
-    })),
-  },
-}));
-
+// Mock models module
 vi.mock('../../models', () => ({
   OfflineStatus: {
     findByPk: vi.fn(() =>
@@ -39,12 +62,6 @@ vi.mock('../../models', () => ({
     ),
   },
 }));
-
-// Set required env vars
-process.env.CHAT_ID = 'test-chat-id';
-process.env.API_TOKEN = 'test-token';
-process.env.THREAD_ID = 'test-thread-id';
-process.env.DATABASE_URL = 'postgres://test';
 
 import { buildApp } from '../../app';
 
@@ -148,4 +165,3 @@ describe('Monitor Routes', () => {
     });
   });
 });
-

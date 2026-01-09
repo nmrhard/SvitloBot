@@ -67,6 +67,18 @@ describe('timeFormatter', () => {
       // Assert
       expect(result).toBe('5г. 45хв.');
     });
+
+    it('should return null for negative duration (out-of-order events)', () => {
+      // Arrange
+      const startTime = 1729699200;
+      const endTime = startTime - 60; // 1 minute before start
+
+      // Act
+      const result = calculateDuration(startTime, endTime);
+
+      // Assert
+      expect(result).toBeNull();
+    });
   });
 
   describe('getDurationMessage', () => {
@@ -93,4 +105,3 @@ describe('timeFormatter', () => {
     });
   });
 });
-
