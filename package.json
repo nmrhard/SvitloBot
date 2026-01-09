@@ -1,10 +1,11 @@
 {
   "name": "svitlobot",
   "version": "0.0.1",
-  "main": "index.js",
+  "main": "src/app.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node app.js"
+    "start": "node src/app.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [],
   "author": "Roman Lytvynov",
@@ -16,5 +17,8 @@
     "pg": "8.16.3",
     "sequelize": "^6.37.5",
     "sqlite3": "^5.1.7"
+  },
+  "devDependencies": {
+    "vitest": "4.0.16"
   }
 }
