@@ -19,10 +19,16 @@ function formatTime(time) {
  * Calculate duration between two timestamps
  * @param {number} startTime - Start UNIX timestamp in seconds
  * @param {number} endTime - End UNIX timestamp in seconds
- * @returns {string} Formatted duration string
+ * @returns {string|null} Formatted duration string or null if invalid
  */
 function calculateDuration(startTime, endTime) {
   const durationMs = (endTime - startTime) * 1000;
+
+  // Return null for invalid/negative duration (out-of-order events)
+  if (durationMs < 0) {
+    return null;
+  }
+
   const minutes = Math.floor(durationMs / 60000) % 60;
   const hours = Math.floor(durationMs / 3600000);
   return `${hours}г. ${minutes}хв.`;
@@ -45,4 +51,3 @@ module.exports = {
   formatTime,
   getDurationMessage,
 };
-

@@ -40,7 +40,10 @@ function buildStatusMessage(status, currentTime, statusRecord) {
       statusRecord.onlineStart,
       currentTime
     );
-    return `${baseMessage}\n${getDurationMessage('offline', onlineDuration)}`;
+    // Skip duration if events arrived out of order
+    if (onlineDuration) {
+      return `${baseMessage}\n${getDurationMessage('offline', onlineDuration)}`;
+    }
   }
 
   if (status === 'online' && statusRecord.offlineStart) {
@@ -48,10 +51,38 @@ function buildStatusMessage(status, currentTime, statusRecord) {
       statusRecord.offlineStart,
       currentTime
     );
-    return `${baseMessage}\n${getDurationMessage('online', offlineDuration)}`;
+    // Skip duration if events arrived out of order
+    if (offlineDuration) {
+      return `${baseMessage}\n${getDurationMessage('online', offlineDuration)}`;
+    }
   }
 
   return baseMessage;
+}
+
+/**
+ * Get the last event timestamp from status record
+ * @param {object} statusRecord - Database status record
+ * @returns {number|null} Last event timestamp
+ */
+function getLastEventTime(statusRecord) {
+  const { offlineStart, onlineStart } = statusRecord;
+  if (!offlineStart && !onlineStart) return null;
+  if (!offlineStart) return onlineStart;
+  if (!onlineStart) return offlineStart;
+  return Math.max(offlineStart, onlineStart);
+}
+
+/**
+ * Check if event should be processed based on timestamp
+ * @param {object} statusRecord - Database status record
+ * @param {number} currentTime - Current UNIX timestamp
+ * @returns {boolean} True if event should be processed
+ */
+function shouldProcessEvent(statusRecord, currentTime) {
+  const lastEventTime = getLastEventTime(statusRecord);
+  // Process if no previous event or current time is newer
+  return !lastEventTime || currentTime > lastEventTime;
 }
 
 /**
@@ -79,10 +110,18 @@ async function updateStatusRecord(statusRecord, status, currentTime) {
  * @param {string} status - 'offline' or 'online'
  * @param {number} currentTime - Current UNIX timestamp
  * @param {object} logger - Fastify logger instance
- * @returns {Promise<string>} Message to send
+ * @returns {Promise<string|null>} Message to send or null if event is stale
  */
 async function processStatusChange(status, currentTime, logger) {
   const statusRecord = await getOrCreateStatusRecord();
+
+  // Skip stale/out-of-order events
+  if (!shouldProcessEvent(statusRecord, currentTime)) {
+    logger?.warn(
+      `Skipping stale event: ${status} at ${currentTime}, last event was at ${statusRecord.lastEventTime}`
+    );
+    return null;
+  }
 
   logger?.info(`Processing status change: ${status}`, { statusRecord });
 
@@ -94,8 +133,9 @@ async function processStatusChange(status, currentTime, logger) {
 
 module.exports = {
   buildStatusMessage,
+  getLastEventTime,
   getOrCreateStatusRecord,
   processStatusChange,
+  shouldProcessEvent,
   updateStatusRecord,
 };
-

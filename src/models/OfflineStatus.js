@@ -26,4 +26,3 @@ const OfflineStatus = sequelize.define(
 );
 
 module.exports = OfflineStatus;
-
