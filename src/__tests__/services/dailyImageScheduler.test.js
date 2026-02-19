@@ -1,103 +1,186 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const fetchMock = vi.fn();
-const sendPhotoMock = vi.fn();
-
 import {
+  createDailyState,
+  extractGroupDataForTargetDate,
   getDelayToNextRun,
-  sendDailyImage,
+  processWindowCheck,
 } from '../../services/dailyImageScheduler';
 
+const KYIV_TOMORROW_EPOCH = '1771538400';
+
+function buildScheduleJson(groupData) {
+  if (!groupData) {
+    return { fact: { data: {} } };
+  }
+
+  return {
+    fact: {
+      data: {
+        [KYIV_TOMORROW_EPOCH]: {
+          'GPV5.1': groupData,
+        },
+      },
+    },
+  };
+}
+
 describe('dailyImageScheduler', () => {
+  const fetchMock = vi.fn();
+  const sendMessageMock = vi.fn();
+  const sendPhotoMock = vi.fn();
   const logger = {
+    error: vi.fn(),
     info: vi.fn(),
     warn: vi.fn(),
-    error: vi.fn(),
   };
 
   beforeEach(() => {
     fetchMock.mockReset();
+    sendMessageMock.mockReset();
     sendPhotoMock.mockReset();
+    logger.error.mockReset();
     logger.info.mockReset();
     logger.warn.mockReset();
-    logger.error.mockReset();
+
+    sendPhotoMock.mockResolvedValue({ ok: true, result: { message_id: 1 } });
+    sendMessageMock.mockResolvedValue({ ok: true, result: { message_id: 2 } });
   });
 
-  it('should download PNG and send photo to Telegram', async () => {
+  it('should extract group data for target date', () => {
     // Arrange
+    const scheduleJson = buildScheduleJson({ 1: 'yes' });
+
+    // Act
+    const result = extractGroupDataForTargetDate(scheduleJson, '2026-02-20');
+
+    // Assert
+    expect(result).toEqual({ 1: 'yes' });
+  });
+
+  it('should send initial graph when tomorrow data appears', async () => {
+    // Arrange
+    const state = createDailyState();
     fetchMock.mockResolvedValue({
+      json: vi.fn(() => Promise.resolve(buildScheduleJson({ 1: 'yes' }))),
       ok: true,
-      headers: { get: vi.fn(() => 'image/png') },
-      buffer: vi.fn(() => Promise.resolve(Buffer.from('png-data'))),
-    });
-    sendPhotoMock.mockResolvedValue({
-      ok: true,
-      result: { message_id: 123 },
     });
 
     // Act
-    await sendDailyImage(logger, {
+    await processWindowCheck(logger, state, {
       fetchClient: fetchMock,
+      now: new Date('2026-02-19T18:00:00Z'),
+      sendMessageFn: sendMessageMock,
       sendPhotoFn: sendPhotoMock,
-      url: 'https://example.com/image.png',
     });
 
     // Assert
-    expect(fetchMock).toHaveBeenCalledWith('https://example.com/image.png');
     expect(sendPhotoMock).toHaveBeenCalledTimes(1);
     expect(sendPhotoMock).toHaveBeenCalledWith(
-      'https://example.com/image.png',
-      expect.stringContaining('Планові/аварійні відключення'),
+      expect.any(String),
+      expect.stringContaining('Графік відключень на 20.02.2026 сформовано'),
       logger,
-      { threadId: undefined }
+      { threadId: undefined },
+    );
+    expect(state.hasSentInitial).toBe(true);
+    expect(state.lastSentHash).toBeTruthy();
+    expect(sendMessageMock).not.toHaveBeenCalled();
+  });
+
+  it('should not resend graph when JSON has no changes', async () => {
+    // Arrange
+    const state = createDailyState();
+    const scheduleJson = buildScheduleJson({ 1: 'yes', 2: 'no' });
+    fetchMock.mockResolvedValue({
+      json: vi.fn(() => Promise.resolve(scheduleJson)),
+      ok: true,
+    });
+
+    // Act
+    await processWindowCheck(logger, state, {
+      fetchClient: fetchMock,
+      now: new Date('2026-02-19T18:00:00Z'),
+      sendMessageFn: sendMessageMock,
+      sendPhotoFn: sendPhotoMock,
+    });
+    await processWindowCheck(logger, state, {
+      fetchClient: fetchMock,
+      now: new Date('2026-02-19T18:30:00Z'),
+      sendMessageFn: sendMessageMock,
+      sendPhotoFn: sendPhotoMock,
+    });
+
+    // Assert
+    expect(sendPhotoMock).toHaveBeenCalledTimes(1);
+    expect(sendMessageMock).not.toHaveBeenCalled();
+  });
+
+  it('should send updated graph when hash changes', async () => {
+    // Arrange
+    const state = createDailyState();
+    fetchMock
+      .mockResolvedValueOnce({
+        json: vi.fn(() => Promise.resolve(buildScheduleJson({ 1: 'yes' }))),
+        ok: true,
+      })
+      .mockResolvedValueOnce({
+        json: vi.fn(() => Promise.resolve(buildScheduleJson({ 1: 'no' }))),
+        ok: true,
+      });
+
+    // Act
+    await processWindowCheck(logger, state, {
+      fetchClient: fetchMock,
+      now: new Date('2026-02-19T18:00:00Z'),
+      sendMessageFn: sendMessageMock,
+      sendPhotoFn: sendPhotoMock,
+    });
+    await processWindowCheck(logger, state, {
+      fetchClient: fetchMock,
+      now: new Date('2026-02-19T18:30:00Z'),
+      sendMessageFn: sendMessageMock,
+      sendPhotoFn: sendPhotoMock,
+    });
+
+    // Assert
+    expect(sendPhotoMock).toHaveBeenCalledTimes(2);
+    expect(sendPhotoMock.mock.calls[1][1]).toContain('оновлено');
+  });
+
+  it('should send missing notice at final check when tomorrow data absent', async () => {
+    // Arrange
+    const state = createDailyState();
+    fetchMock.mockResolvedValue({
+      json: vi.fn(() => Promise.resolve(buildScheduleJson(null))),
+      ok: true,
+    });
+
+    // Act
+    await processWindowCheck(logger, state, {
+      fetchClient: fetchMock,
+      now: new Date('2026-02-19T22:00:00Z'),
+      sendMessageFn: sendMessageMock,
+      sendPhotoFn: sendPhotoMock,
+    });
+
+    // Assert
+    expect(sendPhotoMock).not.toHaveBeenCalled();
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      expect.stringContaining('Графік відключень на 20.02.2026 відсутній'),
+      logger,
+      { threadId: undefined },
     );
   });
 
-  it('should throw when image download fails', async () => {
+  it('should calculate delay to next start run', () => {
     // Arrange
-    fetchMock.mockResolvedValue({
-      ok: false,
-      status: 503,
-    });
-
-    // Act + Assert
-    await expect(
-      sendDailyImage(logger, {
-        fetchClient: fetchMock,
-        sendPhotoFn: sendPhotoMock,
-        url: 'https://example.com/image.png',
-      })
-    ).rejects.toThrow('Image download failed with status 503');
-    expect(sendPhotoMock).not.toHaveBeenCalled();
-  });
-
-  it('should throw when Telegram returns invalid response', async () => {
-    // Arrange
-    fetchMock.mockResolvedValue({
-      ok: true,
-      headers: { get: vi.fn(() => 'image/png') },
-      buffer: vi.fn(() => Promise.resolve(Buffer.from('png-data'))),
-    });
-    sendPhotoMock.mockResolvedValue(undefined);
-
-    // Act + Assert
-    await expect(
-      sendDailyImage(logger, {
-        fetchClient: fetchMock,
-        sendPhotoFn: sendPhotoMock,
-        url: 'https://example.com/image.png',
-      })
-    ).rejects.toThrow('Telegram API returned unexpected response');
-  });
-
-  it('should calculate delay for custom minute schedule', () => {
-    // Arrange
-    const now = new Date('2026-02-18T21:15:00Z');
+    const now = new Date('2026-02-19T17:45:00Z');
 
     // Act
-    const delay = getDelayToNextRun(now, 21, 30, 'UTC');
+    const delay = getDelayToNextRun(now, 20, 0, 'UTC');
 
     // Assert
-    expect(delay).toBe(15 * 60 * 1000);
+    expect(delay).toBe(2 * 60 * 60 * 1000 + 15 * 60 * 1000);
   });
 });

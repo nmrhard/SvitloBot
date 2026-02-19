@@ -14,9 +14,12 @@ function buildThreadPayload(threadId = THREAD_ID) {
  * Send message to Telegram chat
  * @param {string} message - HTML formatted message
  * @param {object} logger - Fastify logger instance
+ * @param {object} options - Optional parameters
+ * @param {string} options.threadId - Thread ID override for this message
  * @returns {Promise<object|undefined>} Telegram API response
  */
-async function sendMessage(message, logger) {
+async function sendMessage(message, logger, options = {}) {
+  const { threadId } = options;
   try {
     const response = await fetch(`${TG_BOT_URL}/sendMessage`, {
       method: 'POST',
@@ -25,7 +28,7 @@ async function sendMessage(message, logger) {
         chat_id: CHAT_ID,
         text: message,
         parse_mode: 'HTML',
-        ...buildThreadPayload(),
+        ...buildThreadPayload(threadId),
       }),
     });
 

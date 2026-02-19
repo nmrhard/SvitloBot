@@ -8,29 +8,67 @@ const API_TOKEN = process.env.API_TOKEN;
 const THREAD_ID = process.env.THREAD_ID;
 const DAILY_THREAD_ID = process.env.DAILY_THREAD_ID;
 const TG_BOT_URL = `https://api.telegram.org/bot${API_TOKEN}`;
+
 const DAILY_PNG_URL =
   process.env.DAILY_PNG_URL ||
   'https://raw.githubusercontent.com/Baskerville42/outage-data-ua/main/images/kyiv-region/gpv-5-1-emergency.png';
-const parsedSendHour = Number(process.env.DAILY_SEND_HOUR);
-const DAILY_SEND_HOUR =
-  Number.isInteger(parsedSendHour) && parsedSendHour >= 0 && parsedSendHour <= 23
-    ? parsedSendHour
-    : 21;
-const parsedSendMinute = Number(process.env.DAILY_SEND_MINUTE);
-const DAILY_SEND_MINUTE =
-  Number.isInteger(parsedSendMinute) &&
-  parsedSendMinute >= 0 &&
-  parsedSendMinute <= 59
-    ? parsedSendMinute
+
+const DAILY_JSON_URL =
+  process.env.DAILY_JSON_URL ||
+  'https://raw.githubusercontent.com/Baskerville42/outage-data-ua/main/data/kyiv-region.json';
+const DAILY_GROUP_KEY = process.env.DAILY_GROUP_KEY || 'GPV5.1';
+
+const parsedCheckStartHour = Number(process.env.DAILY_CHECK_START_HOUR);
+const DAILY_CHECK_START_HOUR =
+  Number.isInteger(parsedCheckStartHour) &&
+  parsedCheckStartHour >= 0 &&
+  parsedCheckStartHour <= 23
+    ? parsedCheckStartHour
+    : 20;
+
+const parsedCheckStartMinute = Number(process.env.DAILY_CHECK_START_MINUTE);
+const DAILY_CHECK_START_MINUTE =
+  Number.isInteger(parsedCheckStartMinute) &&
+  parsedCheckStartMinute >= 0 &&
+  parsedCheckStartMinute <= 59
+    ? parsedCheckStartMinute
     : 0;
+
+const parsedCheckEndHour = Number(process.env.DAILY_CHECK_END_HOUR);
+const DAILY_CHECK_END_HOUR =
+  Number.isInteger(parsedCheckEndHour) &&
+  parsedCheckEndHour >= 0 &&
+  parsedCheckEndHour <= 23
+    ? parsedCheckEndHour
+    : 0;
+
+const parsedCheckEndMinute = Number(process.env.DAILY_CHECK_END_MINUTE);
+const DAILY_CHECK_END_MINUTE =
+  Number.isInteger(parsedCheckEndMinute) &&
+  parsedCheckEndMinute >= 0 &&
+  parsedCheckEndMinute <= 59
+    ? parsedCheckEndMinute
+    : 0;
+
+const parsedCheckIntervalMinutes = Number(process.env.DAILY_CHECK_INTERVAL_MINUTES);
+const DAILY_CHECK_INTERVAL_MINUTES =
+  Number.isInteger(parsedCheckIntervalMinutes) && parsedCheckIntervalMinutes > 0
+    ? parsedCheckIntervalMinutes
+    : 30;
+
 const TIMEZONE = process.env.TIMEZONE || 'Europe/Kyiv';
 
 module.exports = {
   API_TOKEN,
   CHAT_ID,
+  DAILY_CHECK_END_HOUR,
+  DAILY_CHECK_END_MINUTE,
+  DAILY_CHECK_INTERVAL_MINUTES,
+  DAILY_CHECK_START_HOUR,
+  DAILY_CHECK_START_MINUTE,
+  DAILY_GROUP_KEY,
+  DAILY_JSON_URL,
   DAILY_PNG_URL,
-  DAILY_SEND_HOUR,
-  DAILY_SEND_MINUTE,
   DAILY_THREAD_ID,
   statuses,
   TIMEZONE,
