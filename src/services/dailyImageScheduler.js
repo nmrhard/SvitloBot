@@ -4,6 +4,7 @@ const {
   DAILY_PNG_URL,
   DAILY_SEND_HOUR,
   DAILY_SEND_MINUTE,
+  DAILY_THREAD_ID,
   TIMEZONE,
 } = require('../config/constants');
 const { formatTime } = require('../utils/timeFormatter');
@@ -77,7 +78,9 @@ async function sendDailyImage(
     await ensurePngIsAccessible(url, fetchClient);
 
     const caption = `Планові/аварійні відключення станом на ${formattedTime}`;
-    const telegramResponse = await sendPhotoFn(url, caption, logger);
+    const telegramResponse = await sendPhotoFn(url, caption, logger, {
+      threadId: DAILY_THREAD_ID,
+    });
     if (!telegramResponse?.ok) {
       throw new Error('Telegram API returned unexpected response');
     }

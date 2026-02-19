@@ -6,6 +6,7 @@ const statuses = {
 const CHAT_ID = process.env.CHAT_ID;
 const API_TOKEN = process.env.API_TOKEN;
 const THREAD_ID = process.env.THREAD_ID;
+const DAILY_THREAD_ID = process.env.DAILY_THREAD_ID;
 const TG_BOT_URL = `https://api.telegram.org/bot${API_TOKEN}`;
 const DAILY_PNG_URL =
   process.env.DAILY_PNG_URL ||
@@ -30,6 +31,7 @@ module.exports = {
   DAILY_PNG_URL,
   DAILY_SEND_HOUR,
   DAILY_SEND_MINUTE,
+  DAILY_THREAD_ID,
   statuses,
   TIMEZONE,
   TG_BOT_URL,

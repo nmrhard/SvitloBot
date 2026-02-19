@@ -48,7 +48,8 @@ describe('dailyImageScheduler', () => {
     expect(sendPhotoMock).toHaveBeenCalledWith(
       'https://example.com/image.png',
       expect.stringContaining('Планові/аварійні відключення'),
-      logger
+      logger,
+      { threadId: undefined }
     );
   });
 

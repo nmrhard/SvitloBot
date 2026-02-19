@@ -2,12 +2,12 @@ const fetch = require('node-fetch');
 
 const { CHAT_ID, TG_BOT_URL, THREAD_ID } = require('../config/constants');
 
-function buildThreadPayload() {
-  if (!THREAD_ID) {
+function buildThreadPayload(threadId = THREAD_ID) {
+  if (!threadId) {
     return {};
   }
 
-  return { message_thread_id: THREAD_ID };
+  return { message_thread_id: threadId };
 }
 
 /**
@@ -44,9 +44,12 @@ async function sendMessage(message, logger) {
  * @param {string} photoUrl - Public photo URL
  * @param {string} caption - Optional photo caption
  * @param {object} logger - Fastify logger instance
+ * @param {object} options - Optional parameters
+ * @param {string} options.threadId - Thread ID override for this photo
  * @returns {Promise<object|undefined>} Telegram API response
  */
-async function sendPhoto(photoUrl, caption, logger) {
+async function sendPhoto(photoUrl, caption, logger, options = {}) {
+  const { threadId } = options;
   try {
     const response = await fetch(`${TG_BOT_URL}/sendPhoto`, {
       method: 'POST',
@@ -56,7 +59,7 @@ async function sendPhoto(photoUrl, caption, logger) {
         photo: photoUrl,
         caption,
         parse_mode: 'HTML',
-        ...buildThreadPayload(),
+        ...buildThreadPayload(threadId),
       }),
     });
 
