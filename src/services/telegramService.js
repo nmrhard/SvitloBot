@@ -2,6 +2,14 @@ const fetch = require('node-fetch');
 
 const { CHAT_ID, TG_BOT_URL, THREAD_ID } = require('../config/constants');
 
+function buildThreadPayload() {
+  if (!THREAD_ID) {
+    return {};
+  }
+
+  return { message_thread_id: THREAD_ID };
+}
+
 /**
  * Send message to Telegram chat
  * @param {string} message - HTML formatted message
@@ -17,7 +25,7 @@ async function sendMessage(message, logger) {
         chat_id: CHAT_ID,
         text: message,
         parse_mode: 'HTML',
-        message_thread_id: THREAD_ID,
+        ...buildThreadPayload(),
       }),
     });
 
@@ -31,7 +39,39 @@ async function sendMessage(message, logger) {
   }
 }
 
+/**
+ * Send photo to Telegram chat
+ * @param {string} photoUrl - Public photo URL
+ * @param {string} caption - Optional photo caption
+ * @param {object} logger - Fastify logger instance
+ * @returns {Promise<object|undefined>} Telegram API response
+ */
+async function sendPhoto(photoUrl, caption, logger) {
+  try {
+    const response = await fetch(`${TG_BOT_URL}/sendPhoto`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: CHAT_ID,
+        photo: photoUrl,
+        caption,
+        parse_mode: 'HTML',
+        ...buildThreadPayload(),
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Telegram API Error: ${response.statusText}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    logger?.error('Error sending photo:', error.message);
+  }
+}
+
 module.exports = {
   sendMessage,
+  sendPhoto,
 };
 
