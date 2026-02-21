@@ -56,6 +56,12 @@ const DAILY_CHECK_INTERVAL_MINUTES =
     ? parsedCheckIntervalMinutes
     : 30;
 
+const parsedJsonMaxAgeHours = Number(process.env.DAILY_JSON_MAX_AGE_HOURS);
+const DAILY_JSON_MAX_AGE_HOURS =
+  Number.isFinite(parsedJsonMaxAgeHours) && parsedJsonMaxAgeHours > 0
+    ? parsedJsonMaxAgeHours
+    : 24;
+
 const TIMEZONE = process.env.TIMEZONE || 'Europe/Kyiv';
 
 module.exports = {
@@ -68,6 +74,7 @@ module.exports = {
   DAILY_CHECK_START_MINUTE,
   DAILY_GROUP_KEY,
   DAILY_JSON_URL,
+  DAILY_JSON_MAX_AGE_HOURS,
   DAILY_PNG_URL,
   DAILY_THREAD_ID,
   statuses,

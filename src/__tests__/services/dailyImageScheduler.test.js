@@ -3,30 +3,55 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createDailyState,
   extractGroupDataForTargetDate,
+  extractTomorrowEpoch,
+  extractTomorrowGroupData,
   getDelayToNextRun,
+  isJsonFresh,
   processWindowCheck,
+  validateGroupData,
 } from '../../services/dailyImageScheduler';
 
+const KYIV_TODAY_EPOCH = '1771452000';
 const KYIV_TOMORROW_EPOCH = '1771538400';
 
-function buildScheduleJson(groupData) {
-  if (!groupData) {
-    return { fact: { data: {} } };
+function buildFullGroupData(value = 'yes') {
+  const groupData = {};
+  for (let hour = 1; hour <= 24; hour += 1) {
+    groupData[String(hour)] = value;
   }
+  return groupData;
+}
 
+function buildGroupDataWithOutage() {
+  const groupData = buildFullGroupData('yes');
+  groupData['10'] = 'no';
+  return groupData;
+}
+
+function buildScheduleJson(
+  groupData,
+  lastUpdated = '2026-02-19T17:40:00.000Z',
+) {
+  const todayGroup = buildFullGroupData('yes');
   return {
     fact: {
       data: {
+        [KYIV_TODAY_EPOCH]: {
+          'GPV5.1': todayGroup,
+        },
         [KYIV_TOMORROW_EPOCH]: {
-          'GPV5.1': groupData,
+          ...(groupData ? { 'GPV5.1': groupData } : {}),
         },
       },
+      today: Number(KYIV_TODAY_EPOCH),
     },
+    lastUpdated,
   };
 }
 
 describe('dailyImageScheduler', () => {
   const fetchMock = vi.fn();
+  const fetchPngBinaryMock = vi.fn();
   const sendMessageMock = vi.fn();
   const sendPhotoMock = vi.fn();
   const logger = {
@@ -37,6 +62,7 @@ describe('dailyImageScheduler', () => {
 
   beforeEach(() => {
     fetchMock.mockReset();
+    fetchPngBinaryMock.mockReset();
     sendMessageMock.mockReset();
     sendPhotoMock.mockReset();
     logger.error.mockReset();
@@ -45,30 +71,60 @@ describe('dailyImageScheduler', () => {
 
     sendPhotoMock.mockResolvedValue({ ok: true, result: { message_id: 1 } });
     sendMessageMock.mockResolvedValue({ ok: true, result: { message_id: 2 } });
+    fetchPngBinaryMock.mockResolvedValue({
+      contentType: 'image/png',
+      fileName: 'gpv-5-1-emergency.png',
+      photoBuffer: Buffer.from('png-bytes'),
+    });
   });
 
   it('should extract group data for target date', () => {
     // Arrange
-    const scheduleJson = buildScheduleJson({ 1: 'yes' });
+    const scheduleJson = buildScheduleJson(buildFullGroupData());
 
     // Act
     const result = extractGroupDataForTargetDate(scheduleJson, '2026-02-20');
 
     // Assert
-    expect(result).toEqual({ 1: 'yes' });
+    expect(result).toEqual(buildFullGroupData());
+  });
+
+  it('should extract tomorrow epoch from fact.today', () => {
+    // Arrange
+    const scheduleJson = buildScheduleJson(buildFullGroupData());
+
+    // Act
+    const result = extractTomorrowEpoch(scheduleJson);
+
+    // Assert
+    expect(result).toBe(Number(KYIV_TOMORROW_EPOCH));
+  });
+
+  it('should extract tomorrow group data using next epoch logic', () => {
+    // Arrange
+    const scheduleJson = buildScheduleJson(buildGroupDataWithOutage());
+
+    // Act
+    const result = extractTomorrowGroupData(scheduleJson);
+
+    // Assert
+    expect(result).toBeTruthy();
+    expect(result.targetEpoch).toBe(Number(KYIV_TOMORROW_EPOCH));
+    expect(result.groupData).toEqual(buildGroupDataWithOutage());
   });
 
   it('should send initial graph when tomorrow data appears', async () => {
     // Arrange
     const state = createDailyState();
     fetchMock.mockResolvedValue({
-      json: vi.fn(() => Promise.resolve(buildScheduleJson({ 1: 'yes' }))),
+      json: vi.fn(() => Promise.resolve(buildScheduleJson(buildGroupDataWithOutage()))),
       ok: true,
     });
 
     // Act
     await processWindowCheck(logger, state, {
       fetchClient: fetchMock,
+      fetchPngBinaryFn: fetchPngBinaryMock,
       now: new Date('2026-02-19T18:00:00Z'),
       sendMessageFn: sendMessageMock,
       sendPhotoFn: sendPhotoMock,
@@ -77,8 +133,11 @@ describe('dailyImageScheduler', () => {
     // Assert
     expect(sendPhotoMock).toHaveBeenCalledTimes(1);
     expect(sendPhotoMock).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.stringContaining('Графік відключень на 20.02.2026 сформовано'),
+      expect.objectContaining({
+        contentType: 'image/png',
+        fileName: 'gpv-5-1-emergency.png',
+      }),
+      expect.stringContaining('Графік відключень на 20.02.2026'),
       logger,
       { threadId: undefined },
     );
@@ -90,7 +149,7 @@ describe('dailyImageScheduler', () => {
   it('should not resend graph when JSON has no changes', async () => {
     // Arrange
     const state = createDailyState();
-    const scheduleJson = buildScheduleJson({ 1: 'yes', 2: 'no' });
+    const scheduleJson = buildScheduleJson(buildGroupDataWithOutage());
     fetchMock.mockResolvedValue({
       json: vi.fn(() => Promise.resolve(scheduleJson)),
       ok: true,
@@ -99,12 +158,14 @@ describe('dailyImageScheduler', () => {
     // Act
     await processWindowCheck(logger, state, {
       fetchClient: fetchMock,
+      fetchPngBinaryFn: fetchPngBinaryMock,
       now: new Date('2026-02-19T18:00:00Z'),
       sendMessageFn: sendMessageMock,
       sendPhotoFn: sendPhotoMock,
     });
     await processWindowCheck(logger, state, {
       fetchClient: fetchMock,
+      fetchPngBinaryFn: fetchPngBinaryMock,
       now: new Date('2026-02-19T18:30:00Z'),
       sendMessageFn: sendMessageMock,
       sendPhotoFn: sendPhotoMock,
@@ -120,23 +181,32 @@ describe('dailyImageScheduler', () => {
     const state = createDailyState();
     fetchMock
       .mockResolvedValueOnce({
-        json: vi.fn(() => Promise.resolve(buildScheduleJson({ 1: 'yes' }))),
+        json: vi.fn(() => Promise.resolve(buildScheduleJson(buildGroupDataWithOutage()))),
         ok: true,
       })
       .mockResolvedValueOnce({
-        json: vi.fn(() => Promise.resolve(buildScheduleJson({ 1: 'no' }))),
+        json: vi.fn(() =>
+          Promise.resolve(
+            buildScheduleJson({
+              ...buildGroupDataWithOutage(),
+              12: 'second',
+            }),
+          ),
+        ),
         ok: true,
       });
 
     // Act
     await processWindowCheck(logger, state, {
       fetchClient: fetchMock,
+      fetchPngBinaryFn: fetchPngBinaryMock,
       now: new Date('2026-02-19T18:00:00Z'),
       sendMessageFn: sendMessageMock,
       sendPhotoFn: sendPhotoMock,
     });
     await processWindowCheck(logger, state, {
       fetchClient: fetchMock,
+      fetchPngBinaryFn: fetchPngBinaryMock,
       now: new Date('2026-02-19T18:30:00Z'),
       sendMessageFn: sendMessageMock,
       sendPhotoFn: sendPhotoMock,
@@ -151,13 +221,26 @@ describe('dailyImageScheduler', () => {
     // Arrange
     const state = createDailyState();
     fetchMock.mockResolvedValue({
-      json: vi.fn(() => Promise.resolve(buildScheduleJson(null))),
+      json: vi.fn(() =>
+        Promise.resolve({
+          fact: {
+            data: {
+              [KYIV_TODAY_EPOCH]: {
+                'GPV5.1': buildFullGroupData('yes'),
+              },
+            },
+            today: Number(KYIV_TODAY_EPOCH),
+          },
+          lastUpdated: '2026-02-19T17:40:00.000Z',
+        }),
+      ),
       ok: true,
     });
 
     // Act
     await processWindowCheck(logger, state, {
       fetchClient: fetchMock,
+      fetchPngBinaryFn: fetchPngBinaryMock,
       now: new Date('2026-02-19T22:00:00Z'),
       sendMessageFn: sendMessageMock,
       sendPhotoFn: sendPhotoMock,
@@ -183,4 +266,68 @@ describe('dailyImageScheduler', () => {
     // Assert
     expect(delay).toBe(2 * 60 * 60 * 1000 + 15 * 60 * 1000);
   });
+
+  it('should validate group data with 24 valid hours', () => {
+    // Arrange
+    const groupData = buildGroupDataWithOutage();
+
+    // Act
+    const result = validateGroupData(groupData);
+
+    // Assert
+    expect(result).toEqual({ isValid: true, reason: null });
+  });
+
+  it('should reject group data with missing hour', () => {
+    // Arrange
+    const groupData = { 1: 'yes' };
+
+    // Act
+    const result = validateGroupData(groupData);
+
+    // Assert
+    expect(result.isValid).toBe(false);
+    expect(result.reason).toContain('hour 2 is missing');
+  });
+
+  it('should reject stale schedule json', () => {
+    // Arrange
+    const scheduleJson = buildScheduleJson(
+      buildFullGroupData('yes'),
+      '2026-02-17T10:00:00.000Z',
+    );
+    const now = new Date('2026-02-19T18:00:00Z');
+
+    // Act
+    const result = isJsonFresh(scheduleJson, now);
+
+    // Assert
+    expect(result.isFresh).toBe(false);
+  });
+
+  it('should skip send when group json is invalid', async () => {
+    // Arrange
+    const state = createDailyState();
+    const invalidGroupData = buildFullGroupData('yes');
+    invalidGroupData['10'] = 'UNKNOWN';
+
+    fetchMock.mockResolvedValue({
+      json: vi.fn(() => Promise.resolve(buildScheduleJson(invalidGroupData))),
+      ok: true,
+    });
+
+    // Act
+    await processWindowCheck(logger, state, {
+      fetchClient: fetchMock,
+      fetchPngBinaryFn: fetchPngBinaryMock,
+      now: new Date('2026-02-19T18:00:00Z'),
+      sendMessageFn: sendMessageMock,
+      sendPhotoFn: sendPhotoMock,
+    });
+
+    // Assert
+    expect(sendPhotoMock).not.toHaveBeenCalled();
+    expect(state.hasSentInitial).toBe(false);
+  });
+
 });

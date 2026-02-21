@@ -8,6 +8,7 @@ const {
   DAILY_CHECK_START_HOUR,
   DAILY_CHECK_START_MINUTE,
   DAILY_GROUP_KEY,
+  DAILY_JSON_MAX_AGE_HOURS,
   DAILY_JSON_URL,
   DAILY_PNG_URL,
   DAILY_THREAD_ID,
@@ -17,6 +18,15 @@ const { formatTime } = require('../utils/timeFormatter');
 const { sendMessage, sendPhoto } = require('./telegramService');
 
 const RETRY_DELAYS_MS = [10_000, 30_000, 60_000];
+const ALLOWED_GROUP_VALUES = new Set([
+  'first',
+  'mfirst',
+  'maybe',
+  'msecond',
+  'no',
+  'second',
+  'yes',
+]);
 
 let nextCheckTimeout = null;
 let isRunning = false;
@@ -24,6 +34,7 @@ let isRunning = false;
 function createDailyState() {
   return {
     currentWindowKey: null,
+    currentTargetEpoch: null,
     currentTargetDateKey: null,
     currentTargetDateLabel: null,
     hasSentInitial: false,
@@ -194,11 +205,110 @@ function extractGroupDataForTargetDate(
   return null;
 }
 
+function extractTomorrowEpoch(scheduleJson) {
+  const todayEpoch = Number(scheduleJson?.fact?.today);
+  const factData = scheduleJson?.fact?.data;
+  if (!todayEpoch || !factData || typeof factData !== 'object') {
+    return null;
+  }
+
+  const candidate = Object.keys(factData)
+    .map((epoch) => Number(epoch))
+    .filter((epoch) => Number.isFinite(epoch) && epoch > todayEpoch)
+    .sort((a, b) => a - b)[0];
+
+  return Number.isFinite(candidate) ? candidate : null;
+}
+
+function extractTomorrowGroupData(
+  scheduleJson,
+  groupKey = DAILY_GROUP_KEY,
+  timeZone = TIMEZONE,
+) {
+  const tomorrowEpoch = extractTomorrowEpoch(scheduleJson);
+  if (!tomorrowEpoch) {
+    return null;
+  }
+
+  const dayData = scheduleJson?.fact?.data?.[String(tomorrowEpoch)];
+  const groupData = dayData?.[groupKey];
+  if (!groupData || typeof groupData !== 'object') {
+    return null;
+  }
+
+  const targetDate = new Date(tomorrowEpoch * 1000);
+  return {
+    groupData,
+    targetDateKey: formatDateKey(targetDate, timeZone),
+    targetDateLabel: formatDateLabel(targetDate, timeZone),
+    targetEpoch: tomorrowEpoch,
+  };
+}
+
+function isJsonFresh(scheduleJson, now = new Date()) {
+  const lastUpdatedRaw = scheduleJson?.lastUpdated;
+  if (!lastUpdatedRaw) {
+    return {
+      isFresh: false,
+      reason: 'lastUpdated is missing in JSON',
+    };
+  }
+
+  const lastUpdatedDate = new Date(lastUpdatedRaw);
+  if (Number.isNaN(lastUpdatedDate.getTime())) {
+    return {
+      isFresh: false,
+      reason: 'lastUpdated has invalid format',
+    };
+  }
+
+  const maxAgeMs = DAILY_JSON_MAX_AGE_HOURS * 60 * 60 * 1000;
+  const ageMs = now.getTime() - lastUpdatedDate.getTime();
+  if (ageMs > maxAgeMs) {
+    return {
+      isFresh: false,
+      reason: `lastUpdated is older than ${DAILY_JSON_MAX_AGE_HOURS}h`,
+    };
+  }
+
+  return { isFresh: true, reason: null };
+}
+
+function validateGroupData(groupData) {
+  if (!groupData || typeof groupData !== 'object') {
+    return {
+      isValid: false,
+      reason: 'group data is missing',
+    };
+  }
+
+  for (let hour = 1; hour <= 24; hour += 1) {
+    const hourKey = String(hour);
+    const value = groupData[hourKey];
+    if (!value) {
+      return {
+        isValid: false,
+        reason: `hour ${hourKey} is missing`,
+      };
+    }
+
+    if (!ALLOWED_GROUP_VALUES.has(value)) {
+      return {
+        isValid: false,
+        reason: `hour ${hourKey} has invalid value "${value}"`,
+      };
+    }
+  }
+
+  return { isValid: true, reason: null };
+}
+
 function resetStateForWindow(state, windowStart, timeZone = TIMEZONE) {
   const targetDate = new Date(windowStart);
   targetDate.setDate(targetDate.getDate() + 1);
 
   state.currentWindowKey = formatDateKey(windowStart, timeZone);
+  state.currentTargetEpoch = null;
   state.currentTargetDateKey = formatDateKey(targetDate, timeZone);
   state.currentTargetDateLabel = formatDateLabel(targetDate, timeZone);
   state.hasSentInitial = false;
@@ -237,11 +347,38 @@ async function fetchScheduleJson(fetchClient = fetch, url = DAILY_JSON_URL) {
   return response.json();
 }
 
+async function fetchPngBinary(
+  fetchClient = fetch,
+  pngUrl = DAILY_PNG_URL,
+  cacheBustToken = Date.now(),
+) {
+  const url = new URL(pngUrl);
+  url.searchParams.set('ts', String(cacheBustToken));
+
+  const response = await fetchClient(url.toString());
+  if (!response.ok) {
+    throw new Error(`PNG fetch failed with status ${response.status}`);
+  }
+
+  const contentType = response.headers.get('content-type') || 'image/png';
+  const photoBuffer = await response.buffer();
+  if (!photoBuffer.length) {
+    throw new Error('Downloaded PNG is empty');
+  }
+
+  return {
+    contentType,
+    fileName: 'gpv-5-1-emergency.png',
+    photoBuffer,
+  };
+}
+
 async function processWindowCheck(
   logger,
   state = runtimeState,
   {
     fetchClient = fetch,
+    fetchPngBinaryFn = fetchPngBinary,
     jsonUrl = DAILY_JSON_URL,
     now = new Date(),
     pngUrl = DAILY_PNG_URL,
@@ -270,21 +407,49 @@ async function processWindowCheck(
 
   try {
     const scheduleJson = await fetchScheduleJson(fetchClient, jsonUrl);
-    const groupData = extractGroupDataForTargetDate(
+    const freshness = isJsonFresh(scheduleJson, now);
+    if (!freshness.isFresh) {
+      logger?.warn('Skipping graph check due to stale JSON', {
+        reason: freshness.reason,
+        targetDate: state.currentTargetDateLabel,
+      });
+      return windowInfo;
+    }
+
+    const tomorrow = extractTomorrowGroupData(
       scheduleJson,
-      state.currentTargetDateKey,
       DAILY_GROUP_KEY,
       TIMEZONE,
     );
 
-    if (groupData) {
-      const groupHash = buildGroupHash(groupData);
+    if (tomorrow) {
+      const previousTargetDateKey = state.currentTargetDateKey;
+      state.currentTargetEpoch = tomorrow.targetEpoch;
+      state.currentTargetDateKey = tomorrow.targetDateKey;
+      state.currentTargetDateLabel = tomorrow.targetDateLabel;
 
-      if (!state.hasSentInitial) {
+      const groupValidation = validateGroupData(tomorrow.groupData);
+      if (!groupValidation.isValid) {
+        logger?.warn('Skipping graph send due to invalid group data', {
+          group: DAILY_GROUP_KEY,
+          reason: groupValidation.reason,
+          targetDate: state.currentTargetDateLabel,
+        });
+        return windowInfo;
+      }
+
+      const groupHash = buildGroupHash(tomorrow.groupData);
+      const isSameTargetDate = previousTargetDateKey === tomorrow.targetDateKey;
+      if (!state.hasSentInitial || !isSameTargetDate) {
+        const photoPayload = await fetchPngBinaryFn(
+          fetchClient,
+          pngUrl,
+          now.getTime(),
+        );
         const caption = `Графік відключень на ${state.currentTargetDateLabel}. Станом на ${formattedTime}`;
         const response = await runWithRetry(
           () =>
-            sendPhotoFn(pngUrl, caption, logger, {
+            sendPhotoFn(photoPayload, caption, logger, {
               threadId: DAILY_THREAD_ID,
             }),
           logger,
@@ -299,10 +464,15 @@ async function processWindowCheck(
         state.hasSentInitial = true;
         state.lastSentHash = groupHash;
       } else if (groupHash !== state.lastSentHash) {
+        const photoPayload = await fetchPngBinaryFn(
+          fetchClient,
+          pngUrl,
+          now.getTime(),
+        );
         const caption = `Графік на ${state.currentTargetDateLabel} оновлено. Станом на ${formattedTime}`;
         const response = await runWithRetry(
           () =>
-            sendPhotoFn(pngUrl, caption, logger, {
+            sendPhotoFn(photoPayload, caption, logger, {
               threadId: DAILY_THREAD_ID,
             }),
           logger,
@@ -404,9 +574,14 @@ module.exports = {
   clearSchedulerTimers,
   createDailyState,
   extractGroupDataForTargetDate,
+  extractTomorrowEpoch,
+  extractTomorrowGroupData,
+  fetchPngBinary,
   getActiveWindowInfo,
   getDelayToNextInterval,
   getDelayToNextRun,
+  isJsonFresh,
   processWindowCheck,
   startDailyImageScheduler,
+  validateGroupData,
 };
