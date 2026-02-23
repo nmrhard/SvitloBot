@@ -11,6 +11,7 @@ const {
   DAILY_JSON_MAX_AGE_HOURS,
   DAILY_JSON_URL,
   DAILY_PNG_URL,
+  DAILY_REQUIRE_NON_YES_VALUES,
   DAILY_THREAD_ID,
   TIMEZONE,
 } = require('../config/constants');
@@ -303,6 +304,12 @@ function validateGroupData(groupData) {
   return { isValid: true, reason: null };
 }
 
+function hasNonYesValues(groupData) {
+  return Object.values(groupData).some(
+    (value) => String(value).toLowerCase() !== 'yes',
+  );
+}
+
 function resetStateForWindow(state, windowStart, timeZone = TIMEZONE) {
   const targetDate = new Date(windowStart);
   targetDate.setDate(targetDate.getDate() + 1);
@@ -435,6 +442,35 @@ async function processWindowCheck(
           reason: groupValidation.reason,
           targetDate: state.currentTargetDateLabel,
         });
+        return windowInfo;
+      }
+
+      if (DAILY_REQUIRE_NON_YES_VALUES && !hasNonYesValues(tomorrow.groupData)) {
+        logger?.warn('Skipping graph send because tomorrow data is all "yes"', {
+          group: DAILY_GROUP_KEY,
+          targetDate: state.currentTargetDateLabel,
+        });
+        if (
+          windowInfo.isFinalCheck &&
+          !state.hasSentInitial &&
+          !state.missingNoticeSent
+        ) {
+          const notice = `Графік відключень на ${state.currentTargetDateLabel} відсутній`;
+          const response = await runWithRetry(
+            () =>
+              sendMessageFn(notice, logger, {
+                threadId: DAILY_THREAD_ID,
+              }),
+            logger,
+            'Missing graph notice send failed',
+          );
+          if (!response?.ok) {
+            throw new Error(
+              'Telegram API returned unexpected response for missing graph notice',
+            );
+          }
+          state.missingNoticeSent = true;
+        }
         return windowInfo;
       }
 
@@ -580,6 +616,7 @@ module.exports = {
   getActiveWindowInfo,
   getDelayToNextInterval,
   getDelayToNextRun,
+  hasNonYesValues,
   isJsonFresh,
   processWindowCheck,
   startDailyImageScheduler,

@@ -6,6 +6,7 @@ import {
   extractTomorrowEpoch,
   extractTomorrowGroupData,
   getDelayToNextRun,
+  hasNonYesValues,
   isJsonFresh,
   processWindowCheck,
   validateGroupData,
@@ -328,6 +329,38 @@ describe('dailyImageScheduler', () => {
     // Assert
     expect(sendPhotoMock).not.toHaveBeenCalled();
     expect(state.hasSentInitial).toBe(false);
+  });
+
+  it('should skip send when tomorrow schedule is all yes', async () => {
+    // Arrange
+    const state = createDailyState();
+    fetchMock.mockResolvedValue({
+      json: vi.fn(() => Promise.resolve(buildScheduleJson(buildFullGroupData('yes')))),
+      ok: true,
+    });
+
+    // Act
+    await processWindowCheck(logger, state, {
+      fetchClient: fetchMock,
+      fetchPngBinaryFn: fetchPngBinaryMock,
+      now: new Date('2026-02-19T18:00:00Z'),
+      sendMessageFn: sendMessageMock,
+      sendPhotoFn: sendPhotoMock,
+    });
+
+    // Assert
+    expect(sendPhotoMock).not.toHaveBeenCalled();
+    expect(state.hasSentInitial).toBe(false);
+  });
+
+  it('should detect non-yes values in group data', () => {
+    // Arrange
+    const allYes = buildFullGroupData('yes');
+    const withOutage = buildGroupDataWithOutage();
+
+    // Act + Assert
+    expect(hasNonYesValues(allYes)).toBe(false);
+    expect(hasNonYesValues(withOutage)).toBe(true);
   });
 
 });

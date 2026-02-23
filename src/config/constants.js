@@ -61,6 +61,8 @@ const DAILY_JSON_MAX_AGE_HOURS =
   Number.isFinite(parsedJsonMaxAgeHours) && parsedJsonMaxAgeHours > 0
     ? parsedJsonMaxAgeHours
     : 24;
+const DAILY_REQUIRE_NON_YES_VALUES =
+  process.env.DAILY_REQUIRE_NON_YES_VALUES !== 'false';
 
 const TIMEZONE = process.env.TIMEZONE || 'Europe/Kyiv';
 
@@ -75,6 +77,7 @@ module.exports = {
   DAILY_GROUP_KEY,
   DAILY_JSON_URL,
   DAILY_JSON_MAX_AGE_HOURS,
+  DAILY_REQUIRE_NON_YES_VALUES,
   DAILY_PNG_URL,
   DAILY_THREAD_ID,
   statuses,
