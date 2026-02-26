@@ -147,7 +147,7 @@ describe('dailyImageScheduler', () => {
     expect(sendMessageMock).not.toHaveBeenCalled();
   });
 
-  it('should send initial graph for today flow outside evening window', async () => {
+  it('should initialize today baseline without sending outside evening window', async () => {
     // Arrange
     const state = createDailyState();
     fetchMock.mockResolvedValue({
@@ -169,16 +169,7 @@ describe('dailyImageScheduler', () => {
     });
 
     // Assert
-    expect(sendPhotoMock).toHaveBeenCalledTimes(1);
-    expect(sendPhotoMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        contentType: 'image/png',
-        fileName: 'gpv-5-1-emergency.png',
-      }),
-      expect.stringContaining('Графік відключень на 19.02.2026'),
-      logger,
-      { threadId: undefined },
-    );
+    expect(sendPhotoMock).not.toHaveBeenCalled();
     expect(state.hasSentTodayInitial).toBe(true);
     expect(state.lastSentTodayHash).toBeTruthy();
     expect(state.hasSentInitial).toBe(false);
@@ -226,8 +217,8 @@ describe('dailyImageScheduler', () => {
     });
 
     // Assert
-    expect(sendPhotoMock).toHaveBeenCalledTimes(2);
-    expect(sendPhotoMock.mock.calls[1][1]).toContain('Графік на 19.02.2026 оновлено');
+    expect(sendPhotoMock).toHaveBeenCalledTimes(1);
+    expect(sendPhotoMock.mock.calls[0][1]).toContain('Графік на 19.02.2026 оновлено');
     expect(state.hasSentInitial).toBe(false);
     expect(sendMessageMock).not.toHaveBeenCalled();
   });
@@ -254,9 +245,8 @@ describe('dailyImageScheduler', () => {
     });
 
     // Assert
-    expect(sendPhotoMock).toHaveBeenCalledTimes(2);
-    expect(sendPhotoMock.mock.calls[0][1]).toContain('Графік відключень на 19.02.2026');
-    expect(sendPhotoMock.mock.calls[1][1]).toContain('Графік відключень на 20.02.2026');
+    expect(sendPhotoMock).toHaveBeenCalledTimes(1);
+    expect(sendPhotoMock.mock.calls[0][1]).toContain('Графік відключень на 20.02.2026');
     expect(state.hasSentTodayInitial).toBe(true);
     expect(state.hasSentInitial).toBe(true);
     expect(sendMessageMock).not.toHaveBeenCalled();
@@ -330,7 +320,7 @@ describe('dailyImageScheduler', () => {
 
     // Assert
     expect(sendPhotoMock).toHaveBeenCalledTimes(2);
-    expect(sendPhotoMock.mock.calls[1][1]).toContain('оновлено');
+    expect(sendPhotoMock.mock.calls[1][1].toLowerCase()).toContain('оновлено');
   });
 
   it('should send missing notice at final check when tomorrow data absent', async () => {
