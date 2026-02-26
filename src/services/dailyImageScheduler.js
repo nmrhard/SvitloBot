@@ -16,6 +16,7 @@ const {
   DAILY_THREAD_ID,
   TIMEZONE,
 } = require('../config/constants');
+const { DailyGraphState } = require('../models');
 const { formatTime } = require('../utils/timeFormatter');
 const { sendMessage, sendPhoto } = require('./telegramService');
 
@@ -50,6 +51,42 @@ function createDailyState() {
 }
 
 const runtimeState = createDailyState();
+
+async function getPersistentDailyState(logger) {
+  try {
+    let state = await DailyGraphState.findByPk(1);
+    if (!state) {
+      state = await DailyGraphState.create({ id: 1 });
+    }
+
+    return {
+      missingNoticeDateKey: state.missingNoticeDateKey || null,
+      todayDateKey: state.todayDateKey || null,
+      todayHash: state.todayHash || null,
+      tomorrowDateKey: state.tomorrowDateKey || null,
+      tomorrowHash: state.tomorrowHash || null,
+    };
+  } catch (error) {
+    logger?.warn('Persistent scheduler state unavailable', {
+      error: error.message,
+    });
+    return null;
+  }
+}
+
+async function savePersistentDailyState(logger, patch) {
+  try {
+    let state = await DailyGraphState.findByPk(1);
+    if (!state) {
+      state = await DailyGraphState.create({ id: 1 });
+    }
+    await state.update(patch);
+  } catch (error) {
+    logger?.warn('Failed to persist scheduler state', {
+      error: error.message,
+    });
+  }
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -422,6 +459,10 @@ async function processWindowCheck(
     jsonUrl = DAILY_JSON_URL,
     now = new Date(),
     pngUrl = DAILY_PNG_URL,
+    stateStore = {
+      getState: getPersistentDailyState,
+      saveState: savePersistentDailyState,
+    },
     sendMessageFn = sendMessage,
     sendPhotoFn = sendPhoto,
   } = {},
@@ -444,6 +485,7 @@ async function processWindowCheck(
 
   try {
     const scheduleJson = await fetchScheduleJson(fetchClient, jsonUrl);
+    const persistentState = await stateStore.getState(logger);
     const freshness = isJsonFresh(scheduleJson, now);
     if (!freshness.isFresh) {
       logger?.warn('Skipping graph check due to stale JSON', {
@@ -457,6 +499,15 @@ async function processWindowCheck(
     if (today) {
       if (state.currentTodayDateKey !== today.targetDateKey) {
         resetTodayStateForDate(state, today);
+      }
+
+      if (
+        !state.hasSentTodayInitial &&
+        persistentState?.todayDateKey === today.targetDateKey &&
+        persistentState?.todayHash
+      ) {
+        state.hasSentTodayInitial = true;
+        state.lastSentTodayHash = persistentState.todayHash;
       }
 
       if (today.groupData) {
@@ -506,6 +557,10 @@ async function processWindowCheck(
 
             state.hasSentTodayInitial = true;
             state.lastSentTodayHash = todayHash;
+            await stateStore.saveState(logger, {
+              todayDateKey: state.currentTodayDateKey,
+              todayHash,
+            });
           } else if (todayHash !== state.lastSentTodayHash) {
             const photoPayload = await fetchPngBinaryFn(
               fetchClient,
@@ -528,6 +583,11 @@ async function processWindowCheck(
             }
 
             state.lastSentTodayHash = todayHash;
+            await stateStore.saveState(logger, {
+              todayDateKey: state.currentTodayDateKey,
+              todayHash,
+              todayLastNotifiedAt: new Date(),
+            });
           }
         }
       } else {
@@ -552,6 +612,25 @@ async function processWindowCheck(
         state.currentTargetEpoch = tomorrow.targetEpoch;
         state.currentTargetDateKey = tomorrow.targetDateKey;
         state.currentTargetDateLabel = tomorrow.targetDateLabel;
+
+        if (
+          !state.hasSentInitial &&
+          persistentState?.tomorrowDateKey === tomorrow.targetDateKey &&
+          persistentState?.tomorrowHash
+        ) {
+          state.hasSentInitial = true;
+          state.lastSentHash = persistentState.tomorrowHash;
+          logger?.info('Restored tomorrow graph state from persistent storage', {
+            targetDate: state.currentTargetDateLabel,
+          });
+        }
+
+        if (
+          !state.missingNoticeSent &&
+          persistentState?.missingNoticeDateKey === tomorrow.targetDateKey
+        ) {
+          state.missingNoticeSent = true;
+        }
 
         const groupValidation = validateGroupData(tomorrow.groupData);
         if (!groupValidation.isValid) {
@@ -594,6 +673,9 @@ async function processWindowCheck(
               );
             }
             state.missingNoticeSent = true;
+            await stateStore.saveState(logger, {
+              missingNoticeDateKey: state.currentTargetDateKey,
+            });
           }
           return windowInfo;
         }
@@ -624,6 +706,12 @@ async function processWindowCheck(
 
           state.hasSentInitial = true;
           state.lastSentHash = groupHash;
+          await stateStore.saveState(logger, {
+            missingNoticeDateKey: null,
+            tomorrowDateKey: state.currentTargetDateKey,
+            tomorrowHash: groupHash,
+            tomorrowLastNotifiedAt: new Date(),
+          });
         } else if (groupHash !== state.lastSentHash) {
           const photoPayload = await fetchPngBinaryFn(
             fetchClient,
@@ -646,6 +734,12 @@ async function processWindowCheck(
           }
 
           state.lastSentHash = groupHash;
+          await stateStore.saveState(logger, {
+            missingNoticeDateKey: null,
+            tomorrowDateKey: state.currentTargetDateKey,
+            tomorrowHash: groupHash,
+            tomorrowLastNotifiedAt: new Date(),
+          });
         }
       } else if (
         windowInfo.isFinalCheck &&
@@ -668,6 +762,9 @@ async function processWindowCheck(
         }
 
         state.missingNoticeSent = true;
+        await stateStore.saveState(logger, {
+          missingNoticeDateKey: state.currentTargetDateKey,
+        });
       }
     } else {
       logger?.info('Tomorrow graph check skipped outside active window', {
