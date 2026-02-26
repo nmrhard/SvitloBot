@@ -63,6 +63,7 @@ const DAILY_JSON_MAX_AGE_HOURS =
     : 24;
 const DAILY_REQUIRE_NON_YES_VALUES =
   process.env.DAILY_REQUIRE_NON_YES_VALUES !== 'false';
+const DAILY_SEND_TODAY_INITIAL = process.env.DAILY_SEND_TODAY_INITIAL === 'true';
 
 const TIMEZONE = process.env.TIMEZONE || 'Europe/Kyiv';
 
@@ -78,6 +79,7 @@ module.exports = {
   DAILY_JSON_URL,
   DAILY_JSON_MAX_AGE_HOURS,
   DAILY_REQUIRE_NON_YES_VALUES,
+  DAILY_SEND_TODAY_INITIAL,
   DAILY_PNG_URL,
   DAILY_THREAD_ID,
   statuses,

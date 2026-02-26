@@ -12,6 +12,7 @@ const {
   DAILY_JSON_URL,
   DAILY_PNG_URL,
   DAILY_REQUIRE_NON_YES_VALUES,
+  DAILY_SEND_TODAY_INITIAL,
   DAILY_THREAD_ID,
   TIMEZONE,
 } = require('../config/constants');
@@ -477,24 +478,30 @@ async function processWindowCheck(
         } else {
           const todayHash = buildGroupHash(today.groupData);
           if (!state.hasSentTodayInitial) {
-            const photoPayload = await fetchPngBinaryFn(
-              fetchClient,
-              pngUrl,
-              now.getTime(),
-            );
-            const caption = `Графік відключень на ${state.currentTodayDateLabel}. Станом на ${formattedTime}`;
-            const response = await runWithRetry(
-              () =>
-                sendPhotoFn(photoPayload, caption, logger, {
-                  threadId: DAILY_THREAD_ID,
-                }),
-              logger,
-              'Today graph send failed',
-            );
-            if (!response?.ok) {
-              throw new Error(
-                'Telegram API returned unexpected response for today graph',
+            if (DAILY_SEND_TODAY_INITIAL) {
+              const photoPayload = await fetchPngBinaryFn(
+                fetchClient,
+                pngUrl,
+                now.getTime(),
               );
+              const caption = `Графік відключень на ${state.currentTodayDateLabel}. Станом на ${formattedTime}`;
+              const response = await runWithRetry(
+                () =>
+                  sendPhotoFn(photoPayload, caption, logger, {
+                    threadId: DAILY_THREAD_ID,
+                  }),
+                logger,
+                'Today graph send failed',
+              );
+              if (!response?.ok) {
+                throw new Error(
+                  'Telegram API returned unexpected response for today graph',
+                );
+              }
+            } else {
+              logger?.info('Today graph baseline initialized without notify', {
+                targetDate: state.currentTodayDateLabel,
+              });
             }
 
             state.hasSentTodayInitial = true;
