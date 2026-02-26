@@ -30,18 +30,18 @@ function buildGroupDataWithOutage() {
 }
 
 function buildScheduleJson(
-  groupData,
+  tomorrowGroupData,
   lastUpdated = '2026-02-19T17:40:00.000Z',
+  todayGroupData = buildFullGroupData('yes'),
 ) {
-  const todayGroup = buildFullGroupData('yes');
   return {
     fact: {
       data: {
         [KYIV_TODAY_EPOCH]: {
-          'GPV5.1': todayGroup,
+          ...(todayGroupData ? { 'GPV5.1': todayGroupData } : {}),
         },
         [KYIV_TOMORROW_EPOCH]: {
-          ...(groupData ? { 'GPV5.1': groupData } : {}),
+          ...(tomorrowGroupData ? { 'GPV5.1': tomorrowGroupData } : {}),
         },
       },
       today: Number(KYIV_TODAY_EPOCH),
@@ -144,6 +144,121 @@ describe('dailyImageScheduler', () => {
     );
     expect(state.hasSentInitial).toBe(true);
     expect(state.lastSentHash).toBeTruthy();
+    expect(sendMessageMock).not.toHaveBeenCalled();
+  });
+
+  it('should send initial graph for today flow outside evening window', async () => {
+    // Arrange
+    const state = createDailyState();
+    fetchMock.mockResolvedValue({
+      json: vi.fn(() =>
+        Promise.resolve(
+          buildScheduleJson(buildFullGroupData('yes'), undefined, buildGroupDataWithOutage()),
+        ),
+      ),
+      ok: true,
+    });
+
+    // Act
+    await processWindowCheck(logger, state, {
+      fetchClient: fetchMock,
+      fetchPngBinaryFn: fetchPngBinaryMock,
+      now: new Date('2026-02-19T10:00:00Z'),
+      sendMessageFn: sendMessageMock,
+      sendPhotoFn: sendPhotoMock,
+    });
+
+    // Assert
+    expect(sendPhotoMock).toHaveBeenCalledTimes(1);
+    expect(sendPhotoMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contentType: 'image/png',
+        fileName: 'gpv-5-1-emergency.png',
+      }),
+      expect.stringContaining('Графік відключень на 19.02.2026'),
+      logger,
+      { threadId: undefined },
+    );
+    expect(state.hasSentTodayInitial).toBe(true);
+    expect(state.lastSentTodayHash).toBeTruthy();
+    expect(state.hasSentInitial).toBe(false);
+    expect(sendMessageMock).not.toHaveBeenCalled();
+  });
+
+  it('should send updated graph for today flow when hash changes', async () => {
+    // Arrange
+    const state = createDailyState();
+    fetchMock
+      .mockResolvedValueOnce({
+        json: vi.fn(() =>
+          Promise.resolve(
+            buildScheduleJson(buildFullGroupData('yes'), undefined, buildGroupDataWithOutage()),
+          ),
+        ),
+        ok: true,
+      })
+      .mockResolvedValueOnce({
+        json: vi.fn(() =>
+          Promise.resolve(
+            buildScheduleJson(buildFullGroupData('yes'), undefined, {
+              ...buildGroupDataWithOutage(),
+              11: 'second',
+            }),
+          ),
+        ),
+        ok: true,
+      });
+
+    // Act
+    await processWindowCheck(logger, state, {
+      fetchClient: fetchMock,
+      fetchPngBinaryFn: fetchPngBinaryMock,
+      now: new Date('2026-02-19T10:00:00Z'),
+      sendMessageFn: sendMessageMock,
+      sendPhotoFn: sendPhotoMock,
+    });
+    await processWindowCheck(logger, state, {
+      fetchClient: fetchMock,
+      fetchPngBinaryFn: fetchPngBinaryMock,
+      now: new Date('2026-02-19T10:30:00Z'),
+      sendMessageFn: sendMessageMock,
+      sendPhotoFn: sendPhotoMock,
+    });
+
+    // Assert
+    expect(sendPhotoMock).toHaveBeenCalledTimes(2);
+    expect(sendPhotoMock.mock.calls[1][1]).toContain('Графік на 19.02.2026 оновлено');
+    expect(state.hasSentInitial).toBe(false);
+    expect(sendMessageMock).not.toHaveBeenCalled();
+  });
+
+  it('should process today and tomorrow flows independently', async () => {
+    // Arrange
+    const state = createDailyState();
+    fetchMock.mockResolvedValue({
+      json: vi.fn(() =>
+        Promise.resolve(
+          buildScheduleJson(buildGroupDataWithOutage(), undefined, buildGroupDataWithOutage()),
+        ),
+      ),
+      ok: true,
+    });
+
+    // Act
+    await processWindowCheck(logger, state, {
+      fetchClient: fetchMock,
+      fetchPngBinaryFn: fetchPngBinaryMock,
+      now: new Date('2026-02-19T18:00:00Z'),
+      sendMessageFn: sendMessageMock,
+      sendPhotoFn: sendPhotoMock,
+    });
+
+    // Assert
+    expect(sendPhotoMock).toHaveBeenCalledTimes(2);
+    expect(sendPhotoMock.mock.calls[0][1]).toContain('Графік відключень на 19.02.2026');
+    expect(sendPhotoMock.mock.calls[1][1]).toContain('Графік відключень на 20.02.2026');
+    expect(state.hasSentTodayInitial).toBe(true);
+    expect(state.hasSentInitial).toBe(true);
     expect(sendMessageMock).not.toHaveBeenCalled();
   });
 

@@ -1,7 +1,6 @@
 import {
   beforeAll,
   afterAll,
-  beforeEach,
   describe,
   expect,
   it,
@@ -14,61 +13,30 @@ process.env.API_TOKEN = 'test-token';
 process.env.THREAD_ID = 'test-thread-id';
 process.env.DATABASE_URL = 'postgres://localhost:5432/test';
 
-// Mock sequelize to prevent real DB connection
-vi.mock('sequelize', () => {
-  const mockModel = {
-    findByPk: vi.fn(),
-    create: vi.fn(),
-  };
-  return {
-    Sequelize: vi.fn(() => ({
-      sync: vi.fn(() => Promise.resolve()),
-      define: vi.fn(() => mockModel),
-    })),
-    DataTypes: {
-      INTEGER: 'INTEGER',
-      STRING: 'STRING',
-    },
-  };
-});
-
-// Mock external dependencies
-vi.mock('node-fetch', () => ({
-  default: vi.fn(() =>
-    Promise.resolve({
-      ok: true,
-      json: () => Promise.resolve({ ok: true }),
-    })
-  ),
+vi.mock('../../services/statusService', () => ({
+  processStatusChange: vi.fn(async () => 'mock status message'),
 }));
 
-// Mock models module
-vi.mock('../../models', () => ({
-  OfflineStatus: {
-    findByPk: vi.fn(() =>
-      Promise.resolve({
-        onlineStart: null,
-        offlineStart: null,
-        update: vi.fn(() => Promise.resolve()),
-      })
-    ),
-    create: vi.fn(() =>
-      Promise.resolve({
-        id: 1,
-        onlineStart: null,
-        offlineStart: null,
-        update: vi.fn(() => Promise.resolve()),
-      })
-    ),
-  },
+vi.mock('../../services/telegramService', () => ({
+  sendMessage: vi.fn(async () => ({ ok: true })),
+  sendPhoto: vi.fn(async () => ({ ok: true })),
 }));
 
 import { buildApp } from '../../app';
+import sequelize from '../../config/database';
 
 describe('Monitor Routes', () => {
   let app;
 
   beforeAll(async () => {
+    await sequelize.query(`
+      CREATE TABLE IF NOT EXISTS status_timestamps (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        offlineStart INTEGER NULL,
+        onlineStart INTEGER NULL
+      );
+    `);
+    await sequelize.query('DELETE FROM status_timestamps;');
     app = await buildApp();
     await app.ready();
   });
