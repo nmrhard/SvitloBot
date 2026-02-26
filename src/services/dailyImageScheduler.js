@@ -34,6 +34,10 @@ let isRunning = false;
 
 function createDailyState() {
   return {
+    currentTodayDateKey: null,
+    currentTodayDateLabel: null,
+    hasSentTodayInitial: false,
+    lastSentTodayHash: null,
     currentWindowKey: null,
     currentTargetEpoch: null,
     currentTargetDateKey: null,
@@ -246,6 +250,27 @@ function extractTomorrowGroupData(
   };
 }
 
+function extractTodayInfo(
+  scheduleJson,
+  groupKey = DAILY_GROUP_KEY,
+  timeZone = TIMEZONE,
+) {
+  const todayEpoch = Number(scheduleJson?.fact?.today);
+  if (!todayEpoch) {
+    return null;
+  }
+
+  const targetDate = new Date(todayEpoch * 1000);
+  const groupData = scheduleJson?.fact?.data?.[String(todayEpoch)]?.[groupKey];
+
+  return {
+    groupData: groupData && typeof groupData === 'object' ? groupData : null,
+    targetDateKey: formatDateKey(targetDate, timeZone),
+    targetDateLabel: formatDateLabel(targetDate, timeZone),
+    targetEpoch: todayEpoch,
+  };
+}
+
 function isJsonFresh(scheduleJson, now = new Date()) {
   const lastUpdatedRaw = scheduleJson?.lastUpdated;
   if (!lastUpdatedRaw) {
@@ -323,6 +348,13 @@ function resetStateForWindow(state, windowStart, timeZone = TIMEZONE) {
   state.missingNoticeSent = false;
 }
 
+function resetTodayStateForDate(state, dateInfo) {
+  state.currentTodayDateKey = dateInfo.targetDateKey;
+  state.currentTodayDateLabel = dateInfo.targetDateLabel;
+  state.hasSentTodayInitial = false;
+  state.lastSentTodayHash = null;
+}
+
 async function runWithRetry(actionFn, logger, context) {
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
     try {
@@ -394,9 +426,6 @@ async function processWindowCheck(
   } = {},
 ) {
   const windowInfo = getActiveWindowInfo(now);
-  if (!windowInfo.isActive) {
-    return windowInfo;
-  }
 
   if (isRunning) {
     logger?.warn('Skipping JSON check because previous check is still active');
@@ -423,126 +452,220 @@ async function processWindowCheck(
       return windowInfo;
     }
 
-    const tomorrow = extractTomorrowGroupData(
-      scheduleJson,
-      DAILY_GROUP_KEY,
-      TIMEZONE,
-    );
-
-    if (tomorrow) {
-      const previousTargetDateKey = state.currentTargetDateKey;
-      state.currentTargetEpoch = tomorrow.targetEpoch;
-      state.currentTargetDateKey = tomorrow.targetDateKey;
-      state.currentTargetDateLabel = tomorrow.targetDateLabel;
-
-      const groupValidation = validateGroupData(tomorrow.groupData);
-      if (!groupValidation.isValid) {
-        logger?.warn('Skipping graph send due to invalid group data', {
-          group: DAILY_GROUP_KEY,
-          reason: groupValidation.reason,
-          targetDate: state.currentTargetDateLabel,
-        });
-        return windowInfo;
+    const today = extractTodayInfo(scheduleJson, DAILY_GROUP_KEY, TIMEZONE);
+    if (today) {
+      if (state.currentTodayDateKey !== today.targetDateKey) {
+        resetTodayStateForDate(state, today);
       }
 
-      if (DAILY_REQUIRE_NON_YES_VALUES && !hasNonYesValues(tomorrow.groupData)) {
-        logger?.warn('Skipping graph send because tomorrow data is all "yes"', {
-          group: DAILY_GROUP_KEY,
-          targetDate: state.currentTargetDateLabel,
-        });
-        if (
-          windowInfo.isFinalCheck &&
-          !state.hasSentInitial &&
-          !state.missingNoticeSent
+      if (today.groupData) {
+        const todayValidation = validateGroupData(today.groupData);
+        if (!todayValidation.isValid) {
+          logger?.warn('Skipping today graph send due to invalid group data', {
+            group: DAILY_GROUP_KEY,
+            reason: todayValidation.reason,
+            targetDate: state.currentTodayDateLabel,
+          });
+        } else if (
+          DAILY_REQUIRE_NON_YES_VALUES &&
+          !hasNonYesValues(today.groupData)
         ) {
-          const notice = `Графік відключень на ${state.currentTargetDateLabel} відсутній`;
+          logger?.warn('Skipping today graph send because data is all "yes"', {
+            group: DAILY_GROUP_KEY,
+            targetDate: state.currentTodayDateLabel,
+          });
+        } else {
+          const todayHash = buildGroupHash(today.groupData);
+          if (!state.hasSentTodayInitial) {
+            const photoPayload = await fetchPngBinaryFn(
+              fetchClient,
+              pngUrl,
+              now.getTime(),
+            );
+            const caption = `Графік відключень на ${state.currentTodayDateLabel}. Станом на ${formattedTime}`;
+            const response = await runWithRetry(
+              () =>
+                sendPhotoFn(photoPayload, caption, logger, {
+                  threadId: DAILY_THREAD_ID,
+                }),
+              logger,
+              'Today graph send failed',
+            );
+            if (!response?.ok) {
+              throw new Error(
+                'Telegram API returned unexpected response for today graph',
+              );
+            }
+
+            state.hasSentTodayInitial = true;
+            state.lastSentTodayHash = todayHash;
+          } else if (todayHash !== state.lastSentTodayHash) {
+            const photoPayload = await fetchPngBinaryFn(
+              fetchClient,
+              pngUrl,
+              now.getTime(),
+            );
+            const caption = `Графік на ${state.currentTodayDateLabel} оновлено. Станом на ${formattedTime}`;
+            const response = await runWithRetry(
+              () =>
+                sendPhotoFn(photoPayload, caption, logger, {
+                  threadId: DAILY_THREAD_ID,
+                }),
+              logger,
+              'Updated today graph send failed',
+            );
+            if (!response?.ok) {
+              throw new Error(
+                'Telegram API returned unexpected response for updated today graph',
+              );
+            }
+
+            state.lastSentTodayHash = todayHash;
+          }
+        }
+      } else {
+        logger?.warn('Today group data is missing in JSON', {
+          group: DAILY_GROUP_KEY,
+          targetDate: state.currentTodayDateLabel,
+        });
+      }
+    } else {
+      logger?.warn('Skipping today graph check because fact.today is missing');
+    }
+
+    if (windowInfo.isActive) {
+      const tomorrow = extractTomorrowGroupData(
+        scheduleJson,
+        DAILY_GROUP_KEY,
+        TIMEZONE,
+      );
+
+      if (tomorrow) {
+        const previousTargetDateKey = state.currentTargetDateKey;
+        state.currentTargetEpoch = tomorrow.targetEpoch;
+        state.currentTargetDateKey = tomorrow.targetDateKey;
+        state.currentTargetDateLabel = tomorrow.targetDateLabel;
+
+        const groupValidation = validateGroupData(tomorrow.groupData);
+        if (!groupValidation.isValid) {
+          logger?.warn('Skipping graph send due to invalid group data', {
+            group: DAILY_GROUP_KEY,
+            reason: groupValidation.reason,
+            targetDate: state.currentTargetDateLabel,
+          });
+          return windowInfo;
+        }
+
+        if (
+          DAILY_REQUIRE_NON_YES_VALUES &&
+          !hasNonYesValues(tomorrow.groupData)
+        ) {
+          logger?.warn(
+            'Skipping graph send because tomorrow data is all "yes"',
+            {
+              group: DAILY_GROUP_KEY,
+              targetDate: state.currentTargetDateLabel,
+            },
+          );
+          if (
+            windowInfo.isFinalCheck &&
+            !state.hasSentInitial &&
+            !state.missingNoticeSent
+          ) {
+            const notice = `Графік відключень на ${state.currentTargetDateLabel} відсутній`;
+            const response = await runWithRetry(
+              () =>
+                sendMessageFn(notice, logger, {
+                  threadId: DAILY_THREAD_ID,
+                }),
+              logger,
+              'Missing graph notice send failed',
+            );
+            if (!response?.ok) {
+              throw new Error(
+                'Telegram API returned unexpected response for missing graph notice',
+              );
+            }
+            state.missingNoticeSent = true;
+          }
+          return windowInfo;
+        }
+
+        const groupHash = buildGroupHash(tomorrow.groupData);
+        const isSameTargetDate =
+          previousTargetDateKey === tomorrow.targetDateKey;
+        if (!state.hasSentInitial || !isSameTargetDate) {
+          const photoPayload = await fetchPngBinaryFn(
+            fetchClient,
+            pngUrl,
+            now.getTime(),
+          );
+          const caption = `Графік відключень на ${state.currentTargetDateLabel}. Станом на ${formattedTime}`;
           const response = await runWithRetry(
             () =>
-              sendMessageFn(notice, logger, {
+              sendPhotoFn(photoPayload, caption, logger, {
                 threadId: DAILY_THREAD_ID,
               }),
             logger,
-            'Missing graph notice send failed',
+            'Initial graph send failed',
           );
           if (!response?.ok) {
             throw new Error(
-              'Telegram API returned unexpected response for missing graph notice',
+              'Telegram API returned unexpected response for initial graph',
             );
           }
-          state.missingNoticeSent = true;
-        }
-        return windowInfo;
-      }
 
-      const groupHash = buildGroupHash(tomorrow.groupData);
-      const isSameTargetDate = previousTargetDateKey === tomorrow.targetDateKey;
-      if (!state.hasSentInitial || !isSameTargetDate) {
-        const photoPayload = await fetchPngBinaryFn(
-          fetchClient,
-          pngUrl,
-          now.getTime(),
-        );
-        const caption = `Графік відключень на ${state.currentTargetDateLabel}. Станом на ${formattedTime}`;
+          state.hasSentInitial = true;
+          state.lastSentHash = groupHash;
+        } else if (groupHash !== state.lastSentHash) {
+          const photoPayload = await fetchPngBinaryFn(
+            fetchClient,
+            pngUrl,
+            now.getTime(),
+          );
+          const caption = `Графік на ${state.currentTargetDateLabel} ОНОВЛЕНО. Станом на ${formattedTime}`;
+          const response = await runWithRetry(
+            () =>
+              sendPhotoFn(photoPayload, caption, logger, {
+                threadId: DAILY_THREAD_ID,
+              }),
+            logger,
+            'Updated graph send failed',
+          );
+          if (!response?.ok) {
+            throw new Error(
+              'Telegram API returned unexpected response for updated graph',
+            );
+          }
+
+          state.lastSentHash = groupHash;
+        }
+      } else if (
+        windowInfo.isFinalCheck &&
+        !state.hasSentInitial &&
+        !state.missingNoticeSent
+      ) {
+        const notice = `Графік відключень на ${state.currentTargetDateLabel} відсутній`;
         const response = await runWithRetry(
           () =>
-            sendPhotoFn(photoPayload, caption, logger, {
+            sendMessageFn(notice, logger, {
               threadId: DAILY_THREAD_ID,
             }),
           logger,
-          'Initial graph send failed',
+          'Missing graph notice send failed',
         );
         if (!response?.ok) {
           throw new Error(
-            'Telegram API returned unexpected response for initial graph',
+            'Telegram API returned unexpected response for missing graph notice',
           );
         }
 
-        state.hasSentInitial = true;
-        state.lastSentHash = groupHash;
-      } else if (groupHash !== state.lastSentHash) {
-        const photoPayload = await fetchPngBinaryFn(
-          fetchClient,
-          pngUrl,
-          now.getTime(),
-        );
-        const caption = `Графік на ${state.currentTargetDateLabel} оновлено. Станом на ${formattedTime}`;
-        const response = await runWithRetry(
-          () =>
-            sendPhotoFn(photoPayload, caption, logger, {
-              threadId: DAILY_THREAD_ID,
-            }),
-          logger,
-          'Updated graph send failed',
-        );
-        if (!response?.ok) {
-          throw new Error(
-            'Telegram API returned unexpected response for updated graph',
-          );
-        }
-
-        state.lastSentHash = groupHash;
+        state.missingNoticeSent = true;
       }
-    } else if (
-      windowInfo.isFinalCheck &&
-      !state.hasSentInitial &&
-      !state.missingNoticeSent
-    ) {
-      const notice = `Графік відключень на ${state.currentTargetDateLabel} відсутній`;
-      const response = await runWithRetry(
-        () =>
-          sendMessageFn(notice, logger, {
-            threadId: DAILY_THREAD_ID,
-          }),
-        logger,
-        'Missing graph notice send failed',
-      );
-      if (!response?.ok) {
-        throw new Error(
-          'Telegram API returned unexpected response for missing graph notice',
-        );
-      }
-
-      state.missingNoticeSent = true;
+    } else {
+      logger?.info('Tomorrow graph check skipped outside active window', {
+        nowInZone: windowInfo.nowInZone.toISOString(),
+      });
     }
   } catch (error) {
     logger?.error('Window check failed', {
@@ -559,11 +682,8 @@ async function processWindowCheck(
 
 function scheduleNextTick(logger, delayMs) {
   nextCheckTimeout = setTimeout(async () => {
-    const windowInfo = await processWindowCheck(logger);
-    const nextDelay =
-      windowInfo.isActive && !windowInfo.isFinalCheck
-        ? getDelayToNextInterval()
-        : getDelayToNextRun();
+    await processWindowCheck(logger);
+    const nextDelay = getDelayToNextInterval();
     scheduleNextTick(logger, nextDelay);
   }, delayMs);
 }
@@ -578,18 +698,6 @@ function clearSchedulerTimers() {
 function startDailyImageScheduler(logger) {
   clearSchedulerTimers();
 
-  const windowInfo = getActiveWindowInfo();
-  if (windowInfo.isActive) {
-    logger?.info('Daily graph scheduler started inside active window', {
-      group: DAILY_GROUP_KEY,
-      jsonUrl: DAILY_JSON_URL,
-      timeZone: TIMEZONE,
-    });
-    scheduleNextTick(logger, 0);
-    return;
-  }
-
-  const delay = getDelayToNextRun();
   logger?.info('Daily graph scheduler initialized', {
     checkEndHour: DAILY_CHECK_END_HOUR,
     checkEndMinute: DAILY_CHECK_END_MINUTE,
@@ -597,12 +705,12 @@ function startDailyImageScheduler(logger) {
     checkStartHour: DAILY_CHECK_START_HOUR,
     checkStartMinute: DAILY_CHECK_START_MINUTE,
     group: DAILY_GROUP_KEY,
-    initialDelayMs: delay,
+    initialDelayMs: 0,
     jsonUrl: DAILY_JSON_URL,
     pngUrl: DAILY_PNG_URL,
     timeZone: TIMEZONE,
   });
-  scheduleNextTick(logger, delay);
+  scheduleNextTick(logger, 0);
 }
 
 module.exports = {
@@ -610,6 +718,7 @@ module.exports = {
   clearSchedulerTimers,
   createDailyState,
   extractGroupDataForTargetDate,
+  extractTodayInfo,
   extractTomorrowEpoch,
   extractTomorrowGroupData,
   fetchPngBinary,
