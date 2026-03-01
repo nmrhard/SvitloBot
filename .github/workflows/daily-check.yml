@@ -23,4 +23,5 @@ jobs:
             --max-time 20 \
             -X POST "$CHECK_URL" \
             -H "x-api-key: $CHECK_API_KEY" \
-            -H "Content-Type: application/json"
+            -H "Content-Type: application/json" \
+            --data '{}'
