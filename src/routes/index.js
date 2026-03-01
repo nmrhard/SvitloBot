@@ -1,4 +1,5 @@
 const healthRoutes = require('./healthRoutes');
+const internalRoutes = require('./internalRoutes');
 const monitorRoutes = require('./monitorRoutes');
 
 /**
@@ -7,6 +8,7 @@ const monitorRoutes = require('./monitorRoutes');
  */
 async function registerRoutes(fastify) {
   await fastify.register(healthRoutes);
+  await fastify.register(internalRoutes);
   await fastify.register(monitorRoutes);
 }
 

@@ -30,8 +30,6 @@ async function start() {
 
     await fastify.listen({ port: PORT, host: '0.0.0.0' });
     fastify.log.info(`Server running on http://localhost:${PORT}`);
-    const { startDailyImageScheduler } = require('./services');
-    startDailyImageScheduler(fastify.log);
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);
