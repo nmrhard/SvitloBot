@@ -1,0 +1,26 @@
+name: Daily Scheduler Check
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  run-daily-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger internal daily check endpoint
+        env:
+          CHECK_API_KEY: ${{ secrets.CHECK_API_KEY }}
+          CHECK_URL: ${{ secrets.CHECK_URL }}
+        run: |
+          if [ -z "$CHECK_API_KEY" ] || [ -z "$CHECK_URL" ]; then
+            echo "Missing CHECK_API_KEY or CHECK_URL secret"
+            exit 1
+          fi
+
+          curl --fail --silent --show-error \
+            --max-time 20 \
+            -X POST "$CHECK_URL" \
+            -H "x-api-key: $CHECK_API_KEY" \
+            -H "Content-Type: application/json"

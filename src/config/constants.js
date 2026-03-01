@@ -50,7 +50,9 @@ const DAILY_CHECK_END_MINUTE =
     ? parsedCheckEndMinute
     : 0;
 
-const parsedCheckIntervalMinutes = Number(process.env.DAILY_CHECK_INTERVAL_MINUTES);
+const parsedCheckIntervalMinutes = Number(
+  process.env.DAILY_CHECK_INTERVAL_MINUTES,
+);
 const DAILY_CHECK_INTERVAL_MINUTES =
   Number.isInteger(parsedCheckIntervalMinutes) && parsedCheckIntervalMinutes > 0
     ? parsedCheckIntervalMinutes
@@ -63,7 +65,9 @@ const DAILY_JSON_MAX_AGE_HOURS =
     : 24;
 const DAILY_REQUIRE_NON_YES_VALUES =
   process.env.DAILY_REQUIRE_NON_YES_VALUES !== 'false';
-const DAILY_SEND_TODAY_INITIAL = process.env.DAILY_SEND_TODAY_INITIAL === 'true';
+const DAILY_SEND_TODAY_INITIAL =
+  process.env.DAILY_SEND_TODAY_INITIAL === 'true';
+const INTERNAL_CHECK_API_KEY = process.env.INTERNAL_CHECK_API_KEY;
 
 const TIMEZONE = process.env.TIMEZONE || 'Europe/Kyiv';
 
@@ -80,6 +84,7 @@ module.exports = {
   DAILY_JSON_MAX_AGE_HOURS,
   DAILY_REQUIRE_NON_YES_VALUES,
   DAILY_SEND_TODAY_INITIAL,
+  INTERNAL_CHECK_API_KEY,
   DAILY_PNG_URL,
   DAILY_THREAD_ID,
   statuses,
@@ -87,4 +92,3 @@ module.exports = {
   TG_BOT_URL,
   THREAD_ID,
 };
-
