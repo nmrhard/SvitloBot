@@ -522,10 +522,46 @@ async function processWindowCheck(
           DAILY_REQUIRE_NON_YES_VALUES &&
           !hasNonYesValues(today.groupData)
         ) {
-          logger?.warn('Skipping today graph send because data is all "yes"', {
-            group: DAILY_GROUP_KEY,
-            targetDate: state.currentTodayDateLabel,
-          });
+          if (state.hasSentTodayInitial && state.lastSentTodayHash) {
+            const photoPayload = await fetchPngBinaryFn(
+              fetchClient,
+              pngUrl,
+              now.getTime(),
+            );
+            const caption = `Графік на ${state.currentTodayDateLabel} ОНОВЛЕНО - відключення скасовано. Станом на ${formattedTime}`;
+            const response = await runWithRetry(
+              () =>
+                sendPhotoFn(photoPayload, caption, logger, {
+                  threadId: DAILY_THREAD_ID,
+                }),
+              logger,
+              'Cancelled today outages graph send failed',
+            );
+            if (!response?.ok) {
+              throw new Error(
+                'Telegram API returned unexpected response for cancelled today outages graph',
+              );
+            }
+
+            const todayHash = buildGroupHash(today.groupData);
+            state.lastSentTodayHash = todayHash;
+            await stateStore.saveState(logger, {
+              todayDateKey: state.currentTodayDateKey,
+              todayHash,
+              todayLastNotifiedAt: new Date(),
+            });
+            logger?.info('Sent today graph update: outages cancelled', {
+              targetDate: state.currentTodayDateLabel,
+            });
+          } else {
+            logger?.warn(
+              'Skipping today graph send because data is all "yes"',
+              {
+                group: DAILY_GROUP_KEY,
+                targetDate: state.currentTodayDateLabel,
+              },
+            );
+          }
         } else {
           const todayHash = buildGroupHash(today.groupData);
           if (!state.hasSentTodayInitial) {
@@ -567,7 +603,7 @@ async function processWindowCheck(
               pngUrl,
               now.getTime(),
             );
-            const caption = `Графік на ${state.currentTodayDateLabel} оновлено. Станом на ${formattedTime}`;
+            const caption = `Графік на ${state.currentTodayDateLabel} ОНОВЛЕНО. Станом на ${formattedTime}`;
             const response = await runWithRetry(
               () =>
                 sendPhotoFn(photoPayload, caption, logger, {
@@ -620,9 +656,12 @@ async function processWindowCheck(
         ) {
           state.hasSentInitial = true;
           state.lastSentHash = persistentState.tomorrowHash;
-          logger?.info('Restored tomorrow graph state from persistent storage', {
-            targetDate: state.currentTargetDateLabel,
-          });
+          logger?.info(
+            'Restored tomorrow graph state from persistent storage',
+            {
+              targetDate: state.currentTargetDateLabel,
+            },
+          );
         }
 
         if (
@@ -646,36 +685,79 @@ async function processWindowCheck(
           DAILY_REQUIRE_NON_YES_VALUES &&
           !hasNonYesValues(tomorrow.groupData)
         ) {
-          logger?.warn(
-            'Skipping graph send because tomorrow data is all "yes"',
-            {
-              group: DAILY_GROUP_KEY,
-              targetDate: state.currentTargetDateLabel,
-            },
-          );
-          if (
-            windowInfo.isFinalCheck &&
-            !state.hasSentInitial &&
-            !state.missingNoticeSent
-          ) {
-            const notice = `Графік відключень на ${state.currentTargetDateLabel} відсутній`;
+          if (state.hasSentInitial && state.lastSentHash) {
+            const photoPayload = await fetchPngBinaryFn(
+              fetchClient,
+              pngUrl,
+              now.getTime(),
+            );
+            const caption = `Графік на ${state.currentTargetDateLabel} ОНОВЛЕНО - відключення скасовано. Станом на ${formattedTime}`;
             const response = await runWithRetry(
               () =>
-                sendMessageFn(notice, logger, {
+                sendPhotoFn(photoPayload, caption, logger, {
                   threadId: DAILY_THREAD_ID,
                 }),
               logger,
-              'Missing graph notice send failed',
+              'Cancelled outages graph send failed',
             );
             if (!response?.ok) {
               throw new Error(
-                'Telegram API returned unexpected response for missing graph notice',
+                'Telegram API returned unexpected response for cancelled outages graph',
               );
             }
-            state.missingNoticeSent = true;
+
+            const groupHash = buildGroupHash(tomorrow.groupData);
+            state.lastSentHash = groupHash;
             await stateStore.saveState(logger, {
-              missingNoticeDateKey: state.currentTargetDateKey,
+              missingNoticeDateKey: null,
+              tomorrowDateKey: state.currentTargetDateKey,
+              tomorrowHash: groupHash,
+              tomorrowLastNotifiedAt: new Date(),
             });
+            logger?.info('Sent graph update: outages cancelled', {
+              targetDate: state.currentTargetDateLabel,
+            });
+          } else if (windowInfo.isFinalCheck && !state.hasSentInitial) {
+            const photoPayload = await fetchPngBinaryFn(
+              fetchClient,
+              pngUrl,
+              now.getTime(),
+            );
+            const caption = `✅ Графік на ${state.currentTargetDateLabel} - відключень не заплановано. Станом на ${formattedTime}`;
+            const response = await runWithRetry(
+              () =>
+                sendPhotoFn(photoPayload, caption, logger, {
+                  threadId: DAILY_THREAD_ID,
+                }),
+              logger,
+              'No outages graph send failed',
+            );
+            if (!response?.ok) {
+              throw new Error(
+                'Telegram API returned unexpected response for no outages graph',
+              );
+            }
+
+            const groupHash = buildGroupHash(tomorrow.groupData);
+            state.hasSentInitial = true;
+            state.lastSentHash = groupHash;
+            await stateStore.saveState(logger, {
+              missingNoticeDateKey: null,
+              tomorrowDateKey: state.currentTargetDateKey,
+              tomorrowHash: groupHash,
+              tomorrowLastNotifiedAt: new Date(),
+            });
+            logger?.info('Sent no outages graph at final check', {
+              targetDate: state.currentTargetDateLabel,
+            });
+          } else {
+            logger?.warn(
+              'Skipping graph send because tomorrow data is all "yes"',
+              {
+                group: DAILY_GROUP_KEY,
+                targetDate: state.currentTargetDateLabel,
+              },
+            );
           }
           return windowInfo;
         }
