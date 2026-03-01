@@ -717,6 +717,39 @@ async function processWindowCheck(
             logger?.info('Sent graph update: outages cancelled', {
               targetDate: state.currentTargetDateLabel,
             });
+          } else if (windowInfo.isFinalCheck && !state.hasSentInitial) {
+            const photoPayload = await fetchPngBinaryFn(
+              fetchClient,
+              pngUrl,
+              now.getTime(),
+            );
+            const caption = `✅ Графік на ${state.currentTargetDateLabel} - відключень не заплановано. Станом на ${formattedTime}`;
+            const response = await runWithRetry(
+              () =>
+                sendPhotoFn(photoPayload, caption, logger, {
+                  threadId: DAILY_THREAD_ID,
+                }),
+              logger,
+              'No outages graph send failed',
+            );
+            if (!response?.ok) {
+              throw new Error(
+                'Telegram API returned unexpected response for no outages graph',
+              );
+            }
+
+            const groupHash = buildGroupHash(tomorrow.groupData);
+            state.hasSentInitial = true;
+            state.lastSentHash = groupHash;
+            await stateStore.saveState(logger, {
+              missingNoticeDateKey: null,
+              tomorrowDateKey: state.currentTargetDateKey,
+              tomorrowHash: groupHash,
+              tomorrowLastNotifiedAt: new Date(),
+            });
+            logger?.info('Sent no outages graph at final check', {
+              targetDate: state.currentTargetDateLabel,
+            });
           } else {
             logger?.warn(
               'Skipping graph send because tomorrow data is all "yes"',
@@ -725,30 +758,6 @@ async function processWindowCheck(
                 targetDate: state.currentTargetDateLabel,
               },
             );
-            if (
-              windowInfo.isFinalCheck &&
-              !state.hasSentInitial &&
-              !state.missingNoticeSent
-            ) {
-              const notice = `Графік відключень на ${state.currentTargetDateLabel} відсутній`;
-              const response = await runWithRetry(
-                () =>
-                  sendMessageFn(notice, logger, {
-                    threadId: DAILY_THREAD_ID,
-                  }),
-                logger,
-                'Missing graph notice send failed',
-              );
-              if (!response?.ok) {
-                throw new Error(
-                  'Telegram API returned unexpected response for missing graph notice',
-                );
-              }
-              state.missingNoticeSent = true;
-              await stateStore.saveState(logger, {
-                missingNoticeDateKey: state.currentTargetDateKey,
-              });
-            }
           }
           return windowInfo;
         }
