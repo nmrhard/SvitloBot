@@ -468,4 +468,82 @@ describe('dailyImageScheduler', () => {
     expect(hasNonYesValues(withOutage)).toBe(true);
   });
 
+  it('should send graph when tomorrow changes from outages to all yes', async () => {
+    // Arrange
+    const state = createDailyState();
+    fetchMock
+      .mockResolvedValueOnce({
+        json: vi.fn(() => Promise.resolve(buildScheduleJson(buildGroupDataWithOutage()))),
+        ok: true,
+      })
+      .mockResolvedValueOnce({
+        json: vi.fn(() => Promise.resolve(buildScheduleJson(buildFullGroupData('yes')))),
+        ok: true,
+      });
+
+    // Act
+    await processWindowCheck(logger, state, {
+      fetchClient: fetchMock,
+      fetchPngBinaryFn: fetchPngBinaryMock,
+      now: new Date('2026-02-19T18:00:00Z'),
+      sendMessageFn: sendMessageMock,
+      sendPhotoFn: sendPhotoMock,
+    });
+    await processWindowCheck(logger, state, {
+      fetchClient: fetchMock,
+      fetchPngBinaryFn: fetchPngBinaryMock,
+      now: new Date('2026-02-19T18:30:00Z'),
+      sendMessageFn: sendMessageMock,
+      sendPhotoFn: sendPhotoMock,
+    });
+
+    // Assert
+    expect(sendPhotoMock).toHaveBeenCalledTimes(2);
+    expect(sendPhotoMock.mock.calls[0][1]).toContain('Графік відключень на 20.02.2026');
+    expect(sendPhotoMock.mock.calls[1][1]).toContain('відключення скасовано');
+  });
+
+  it('should send graph when today changes from outages to all yes', async () => {
+    // Arrange
+    const state = createDailyState();
+    fetchMock
+      .mockResolvedValueOnce({
+        json: vi.fn(() =>
+          Promise.resolve(
+            buildScheduleJson(buildFullGroupData('yes'), undefined, buildGroupDataWithOutage()),
+          ),
+        ),
+        ok: true,
+      })
+      .mockResolvedValueOnce({
+        json: vi.fn(() =>
+          Promise.resolve(
+            buildScheduleJson(buildFullGroupData('yes'), undefined, buildFullGroupData('yes')),
+          ),
+        ),
+        ok: true,
+      });
+
+    // Act
+    await processWindowCheck(logger, state, {
+      fetchClient: fetchMock,
+      fetchPngBinaryFn: fetchPngBinaryMock,
+      now: new Date('2026-02-19T10:00:00Z'),
+      sendMessageFn: sendMessageMock,
+      sendPhotoFn: sendPhotoMock,
+    });
+    await processWindowCheck(logger, state, {
+      fetchClient: fetchMock,
+      fetchPngBinaryFn: fetchPngBinaryMock,
+      now: new Date('2026-02-19T10:30:00Z'),
+      sendMessageFn: sendMessageMock,
+      sendPhotoFn: sendPhotoMock,
+    });
+
+    // Assert
+    expect(sendPhotoMock).toHaveBeenCalledTimes(1);
+    expect(sendPhotoMock.mock.calls[0][1]).toContain('відключення скасовано');
+    expect(state.hasSentTodayInitial).toBe(true);
+  });
+
 });
