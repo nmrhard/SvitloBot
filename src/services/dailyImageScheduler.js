@@ -522,7 +522,12 @@ async function processWindowCheck(
           DAILY_REQUIRE_NON_YES_VALUES &&
           !hasNonYesValues(today.groupData)
         ) {
-          if (state.hasSentTodayInitial && state.lastSentTodayHash) {
+          const todayHash = buildGroupHash(today.groupData);
+          if (
+            state.hasSentTodayInitial &&
+            state.lastSentTodayHash &&
+            todayHash !== state.lastSentTodayHash
+          ) {
             const photoPayload = await fetchPngBinaryFn(
               fetchClient,
               pngUrl,
@@ -543,7 +548,6 @@ async function processWindowCheck(
               );
             }
 
-            const todayHash = buildGroupHash(today.groupData);
             state.lastSentTodayHash = todayHash;
             await stateStore.saveState(logger, {
               todayDateKey: state.currentTodayDateKey,
@@ -685,7 +689,12 @@ async function processWindowCheck(
           DAILY_REQUIRE_NON_YES_VALUES &&
           !hasNonYesValues(tomorrow.groupData)
         ) {
-          if (state.hasSentInitial && state.lastSentHash) {
+          const groupHash = buildGroupHash(tomorrow.groupData);
+          if (
+            state.hasSentInitial &&
+            state.lastSentHash &&
+            groupHash !== state.lastSentHash
+          ) {
             const photoPayload = await fetchPngBinaryFn(
               fetchClient,
               pngUrl,
@@ -706,7 +715,6 @@ async function processWindowCheck(
               );
             }
 
-            const groupHash = buildGroupHash(tomorrow.groupData);
             state.lastSentHash = groupHash;
             await stateStore.saveState(logger, {
               missingNoticeDateKey: null,

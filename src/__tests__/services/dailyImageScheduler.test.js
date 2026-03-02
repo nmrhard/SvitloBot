@@ -479,6 +479,10 @@ describe('dailyImageScheduler', () => {
       .mockResolvedValueOnce({
         json: vi.fn(() => Promise.resolve(buildScheduleJson(buildFullGroupData('yes')))),
         ok: true,
+      })
+      .mockResolvedValueOnce({
+        json: vi.fn(() => Promise.resolve(buildScheduleJson(buildFullGroupData('yes')))),
+        ok: true,
       });
 
     // Act
@@ -493,6 +497,13 @@ describe('dailyImageScheduler', () => {
       fetchClient: fetchMock,
       fetchPngBinaryFn: fetchPngBinaryMock,
       now: new Date('2026-02-19T18:30:00Z'),
+      sendMessageFn: sendMessageMock,
+      sendPhotoFn: sendPhotoMock,
+    });
+    await processWindowCheck(logger, state, {
+      fetchClient: fetchMock,
+      fetchPngBinaryFn: fetchPngBinaryMock,
+      now: new Date('2026-02-19T19:00:00Z'),
       sendMessageFn: sendMessageMock,
       sendPhotoFn: sendPhotoMock,
     });
@@ -522,6 +533,14 @@ describe('dailyImageScheduler', () => {
           ),
         ),
         ok: true,
+      })
+      .mockResolvedValueOnce({
+        json: vi.fn(() =>
+          Promise.resolve(
+            buildScheduleJson(buildFullGroupData('yes'), undefined, buildFullGroupData('yes')),
+          ),
+        ),
+        ok: true,
       });
 
     // Act
@@ -536,6 +555,13 @@ describe('dailyImageScheduler', () => {
       fetchClient: fetchMock,
       fetchPngBinaryFn: fetchPngBinaryMock,
       now: new Date('2026-02-19T10:30:00Z'),
+      sendMessageFn: sendMessageMock,
+      sendPhotoFn: sendPhotoMock,
+    });
+    await processWindowCheck(logger, state, {
+      fetchClient: fetchMock,
+      fetchPngBinaryFn: fetchPngBinaryMock,
+      now: new Date('2026-02-19T11:00:00Z'),
       sendMessageFn: sendMessageMock,
       sendPhotoFn: sendPhotoMock,
     });
