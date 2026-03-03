@@ -8,6 +8,7 @@ on:
 jobs:
   run-daily-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     steps:
       - name: Trigger internal daily check endpoint
         env:
@@ -19,9 +20,35 @@ jobs:
             exit 1
           fi
 
-          curl --fail --silent --show-error \
-            --max-time 20 \
-            -X POST "$CHECK_URL" \
-            -H "x-api-key: $CHECK_API_KEY" \
-            -H "Content-Type: application/json" \
-            --data '{}'
+          MAX_RETRIES=3
+          RETRY_DELAY=5
+          TIMEOUT=30
+          
+          for i in $(seq 1 $MAX_RETRIES); do
+            echo "Attempt $i of $MAX_RETRIES..."
+            
+            if curl --fail --silent --show-error \
+              --max-time $TIMEOUT \
+              --connect-timeout 10 \
+              --retry 2 \
+              --retry-delay 3 \
+              --retry-max-time 60 \
+              -X POST "$CHECK_URL" \
+              -H "x-api-key: $CHECK_API_KEY" \
+              -H "Content-Type: application/json" \
+              --data '{}'; then
+              echo "✓ Check successful!"
+              exit 0
+            fi
+            
+            EXIT_CODE=$?
+            echo "✗ Attempt $i failed with exit code $EXIT_CODE"
+            
+            if [ $i -lt $MAX_RETRIES ]; then
+              echo "Waiting ${RETRY_DELAY}s before retry..."
+              sleep $RETRY_DELAY
+            fi
+          done
+          
+          echo "All $MAX_RETRIES attempts failed"
+          exit 1
