@@ -737,7 +737,7 @@ async function processWindowCheck(
               pngUrl,
               now.getTime(),
             );
-            const caption = `✅ Графік на ${state.currentTargetDateLabel} - я. Станом на ${formattedTime}`;
+            const caption = `✅ Графік на ${state.currentTargetDateLabel} - відключень не заплановано. Станом на ${formattedTime}`;
             const response = await runWithRetry(
               () =>
                 sendPhotoFn(photoPayload, caption, logger, {
