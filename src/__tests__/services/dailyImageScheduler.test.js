@@ -596,4 +596,28 @@ describe('dailyImageScheduler', () => {
     expect(sendMessageMock).not.toHaveBeenCalled();
   });
 
+  it('should send no outages graph when final check runs with slight delay', async () => {
+    // Arrange
+    const state = createDailyState();
+    fetchMock.mockResolvedValue({
+      json: vi.fn(() => Promise.resolve(buildScheduleJson(buildFullGroupData('yes')))),
+      ok: true,
+    });
+
+    // Act
+    await processWindowCheck(logger, state, {
+      fetchClient: fetchMock,
+      fetchPngBinaryFn: fetchPngBinaryMock,
+      now: new Date('2026-02-19T22:01:00Z'),
+      sendMessageFn: sendMessageMock,
+      sendPhotoFn: sendPhotoMock,
+    });
+
+    // Assert
+    expect(sendPhotoMock).toHaveBeenCalledTimes(1);
+    expect(sendPhotoMock.mock.calls[0][1]).toContain('відключень не заплановано');
+    expect(state.hasSentInitial).toBe(true);
+    expect(sendMessageMock).not.toHaveBeenCalled();
+  });
+
 });

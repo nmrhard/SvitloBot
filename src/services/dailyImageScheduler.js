@@ -154,6 +154,7 @@ function getActiveWindowInfo(now = new Date(), timeZone = TIMEZONE) {
   const nowInZone = getTimeInZone(now, timeZone);
   const startMinutes = DAILY_CHECK_START_HOUR * 60 + DAILY_CHECK_START_MINUTE;
   const endMinutes = DAILY_CHECK_END_HOUR * 60 + DAILY_CHECK_END_MINUTE;
+  const intervalMinutes = Math.max(DAILY_CHECK_INTERVAL_MINUTES, 1);
   const crossesMidnight = endMinutes <= startMinutes;
 
   const startToday = new Date(nowInZone);
@@ -181,13 +182,18 @@ function getActiveWindowInfo(now = new Date(), timeZone = TIMEZONE) {
   }
 
   const isActive = nowInZone >= windowStart && nowInZone <= windowEnd;
+  const finalCheckGraceMs = intervalMinutes * 60 * 1000;
+  const isWithinFinalGrace =
+    nowInZone > windowEnd &&
+    nowInZone.getTime() - windowEnd.getTime() < finalCheckGraceMs;
   const isFinalCheck =
-    isActive &&
-    nowInZone.getHours() === DAILY_CHECK_END_HOUR &&
-    nowInZone.getMinutes() === DAILY_CHECK_END_MINUTE;
+    (isActive &&
+      nowInZone.getHours() === DAILY_CHECK_END_HOUR &&
+      nowInZone.getMinutes() === DAILY_CHECK_END_MINUTE) ||
+    isWithinFinalGrace;
 
   return {
-    isActive,
+    isActive: isActive || isWithinFinalGrace,
     isFinalCheck,
     nowInZone,
     windowEnd,
@@ -731,7 +737,7 @@ async function processWindowCheck(
               pngUrl,
               now.getTime(),
             );
-            const caption = `✅ Графік на ${state.currentTargetDateLabel} - відключень не заплановано. Станом на ${formattedTime}`;
+            const caption = `✅ Графік на ${state.currentTargetDateLabel} - я. Станом на ${formattedTime}`;
             const response = await runWithRetry(
               () =>
                 sendPhotoFn(photoPayload, caption, logger, {
