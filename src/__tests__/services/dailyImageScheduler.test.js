@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  buildGroupHash,
   createDailyState,
   extractGroupDataForTargetDate,
   extractTomorrowEpoch,
@@ -617,6 +618,47 @@ describe('dailyImageScheduler', () => {
     expect(sendPhotoMock).toHaveBeenCalledTimes(1);
     expect(sendPhotoMock.mock.calls[0][1]).toContain('відключень не заплановано');
     expect(state.hasSentInitial).toBe(true);
+    expect(sendMessageMock).not.toHaveBeenCalled();
+  });
+
+  it('should send no outages graph at final check after restoring state', async () => {
+    // Arrange
+    const state = createDailyState();
+    const saveStateMock = vi.fn(async () => {});
+    const allYesGroupData = buildFullGroupData('yes');
+    fetchMock.mockResolvedValue({
+      json: vi.fn(() => Promise.resolve(buildScheduleJson(allYesGroupData))),
+      ok: true,
+    });
+
+    // Act
+    await processWindowCheck(logger, state, {
+      fetchClient: fetchMock,
+      fetchPngBinaryFn: fetchPngBinaryMock,
+      now: new Date('2026-02-19T22:03:00Z'),
+      sendMessageFn: sendMessageMock,
+      sendPhotoFn: sendPhotoMock,
+      stateStore: {
+        getState: async () => ({
+          missingNoticeDateKey: null,
+          todayDateKey: null,
+          todayHash: null,
+          tomorrowDateKey: '2026-02-20',
+          tomorrowHash: buildGroupHash(allYesGroupData),
+        }),
+        saveState: saveStateMock,
+      },
+    });
+
+    // Assert
+    expect(sendPhotoMock).toHaveBeenCalledTimes(1);
+    expect(sendPhotoMock.mock.calls[0][1]).toContain('відключень не заплановано');
+    expect(saveStateMock).toHaveBeenCalledWith(
+      logger,
+      expect.objectContaining({
+        missingNoticeDateKey: '2026-02-20',
+      }),
+    );
     expect(sendMessageMock).not.toHaveBeenCalled();
   });
 

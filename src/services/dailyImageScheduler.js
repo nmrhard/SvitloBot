@@ -731,7 +731,7 @@ async function processWindowCheck(
             logger?.info('Sent graph update: outages cancelled', {
               targetDate: state.currentTargetDateLabel,
             });
-          } else if (windowInfo.isFinalCheck && !state.hasSentInitial) {
+          } else if (windowInfo.isFinalCheck && !state.missingNoticeSent) {
             const photoPayload = await fetchPngBinaryFn(
               fetchClient,
               pngUrl,
@@ -755,8 +755,9 @@ async function processWindowCheck(
             const groupHash = buildGroupHash(tomorrow.groupData);
             state.hasSentInitial = true;
             state.lastSentHash = groupHash;
+            state.missingNoticeSent = true;
             await stateStore.saveState(logger, {
-              missingNoticeDateKey: null,
+              missingNoticeDateKey: state.currentTargetDateKey,
               tomorrowDateKey: state.currentTargetDateKey,
               tomorrowHash: groupHash,
               tomorrowLastNotifiedAt: new Date(),
@@ -769,6 +770,9 @@ async function processWindowCheck(
               'Skipping graph send because tomorrow data is all "yes"',
               {
                 group: DAILY_GROUP_KEY,
+                hasSentInitial: state.hasSentInitial,
+                isFinalCheck: windowInfo.isFinalCheck,
+                missingNoticeSent: state.missingNoticeSent,
                 targetDate: state.currentTargetDateLabel,
               },
             );
