@@ -184,12 +184,17 @@ function getActiveWindowInfo(now = new Date(), timeZone = TIMEZONE) {
   const isActive = nowInZone >= windowStart && nowInZone <= windowEnd;
   const finalCheckGraceMs = intervalMinutes * 60 * 1000;
   const isWithinFinalGrace =
+    crossesMidnight &&
     nowInZone > windowEnd &&
     nowInZone.getTime() - windowEnd.getTime() < finalCheckGraceMs;
+  const msUntilWindowEnd = windowEnd.getTime() - nowInZone.getTime();
+  const isLastPlannedIntervalCheck =
+    isActive && msUntilWindowEnd >= 0 && msUntilWindowEnd < finalCheckGraceMs;
   const isFinalCheck =
     (isActive &&
       nowInZone.getHours() === DAILY_CHECK_END_HOUR &&
       nowInZone.getMinutes() === DAILY_CHECK_END_MINUTE) ||
+    isLastPlannedIntervalCheck ||
     isWithinFinalGrace;
 
   return {
@@ -292,6 +297,41 @@ function extractTomorrowGroupData(
     targetDateLabel: formatDateLabel(targetDate, timeZone),
     targetEpoch: tomorrowEpoch,
   };
+}
+
+function extractTargetGroupData(
+  scheduleJson,
+  targetDateKey,
+  groupKey = DAILY_GROUP_KEY,
+  timeZone = TIMEZONE,
+) {
+  const factData = scheduleJson?.fact?.data;
+  if (!targetDateKey || !factData || typeof factData !== 'object') {
+    return null;
+  }
+
+  const entries = Object.entries(factData);
+  for (const [epoch, dayData] of entries) {
+    const epochDate = new Date(Number(epoch) * 1000);
+    const epochDateKey = formatDateKey(epochDate, timeZone);
+    if (epochDateKey !== targetDateKey) {
+      continue;
+    }
+
+    const groupData = dayData?.[groupKey];
+    if (!groupData || typeof groupData !== 'object') {
+      return null;
+    }
+
+    return {
+      groupData,
+      targetDateKey: epochDateKey,
+      targetDateLabel: formatDateLabel(epochDate, timeZone),
+      targetEpoch: Number(epoch),
+    };
+  }
+
+  return null;
 }
 
 function extractTodayInfo(
@@ -647,8 +687,9 @@ async function processWindowCheck(
     }
 
     if (windowInfo.isActive) {
-      const tomorrow = extractTomorrowGroupData(
+      const tomorrow = extractTargetGroupData(
         scheduleJson,
+        state.currentTargetDateKey,
         DAILY_GROUP_KEY,
         TIMEZONE,
       );
