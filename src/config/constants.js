@@ -40,7 +40,7 @@ const DAILY_CHECK_END_HOUR =
   parsedCheckEndHour >= 0 &&
   parsedCheckEndHour <= 23
     ? parsedCheckEndHour
-    : 0;
+    : 23;
 
 const parsedCheckEndMinute = Number(process.env.DAILY_CHECK_END_MINUTE);
 const DAILY_CHECK_END_MINUTE =
@@ -48,7 +48,7 @@ const DAILY_CHECK_END_MINUTE =
   parsedCheckEndMinute >= 0 &&
   parsedCheckEndMinute <= 59
     ? parsedCheckEndMinute
-    : 0;
+    : 59;
 
 const parsedCheckIntervalMinutes = Number(
   process.env.DAILY_CHECK_INTERVAL_MINUTES,

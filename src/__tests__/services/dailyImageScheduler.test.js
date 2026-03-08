@@ -348,7 +348,7 @@ describe('dailyImageScheduler', () => {
     await processWindowCheck(logger, state, {
       fetchClient: fetchMock,
       fetchPngBinaryFn: fetchPngBinaryMock,
-      now: new Date('2026-02-19T22:00:00Z'),
+      now: new Date('2026-02-19T21:59:00Z'),
       sendMessageFn: sendMessageMock,
       sendPhotoFn: sendPhotoMock,
     });
@@ -585,7 +585,7 @@ describe('dailyImageScheduler', () => {
     await processWindowCheck(logger, state, {
       fetchClient: fetchMock,
       fetchPngBinaryFn: fetchPngBinaryMock,
-      now: new Date('2026-02-19T22:00:00Z'),
+      now: new Date('2026-02-19T21:59:00Z'),
       sendMessageFn: sendMessageMock,
       sendPhotoFn: sendPhotoMock,
     });
@@ -597,7 +597,7 @@ describe('dailyImageScheduler', () => {
     expect(sendMessageMock).not.toHaveBeenCalled();
   });
 
-  it('should send no outages graph when final check runs with slight delay', async () => {
+  it('should send no outages graph during the last interval before window end', async () => {
     // Arrange
     const state = createDailyState();
     fetchMock.mockResolvedValue({
@@ -609,7 +609,7 @@ describe('dailyImageScheduler', () => {
     await processWindowCheck(logger, state, {
       fetchClient: fetchMock,
       fetchPngBinaryFn: fetchPngBinaryMock,
-      now: new Date('2026-02-19T22:01:00Z'),
+      now: new Date('2026-02-19T21:30:00Z'),
       sendMessageFn: sendMessageMock,
       sendPhotoFn: sendPhotoMock,
     });
@@ -635,7 +635,7 @@ describe('dailyImageScheduler', () => {
     await processWindowCheck(logger, state, {
       fetchClient: fetchMock,
       fetchPngBinaryFn: fetchPngBinaryMock,
-      now: new Date('2026-02-19T22:03:00Z'),
+      now: new Date('2026-02-19T21:35:00Z'),
       sendMessageFn: sendMessageMock,
       sendPhotoFn: sendPhotoMock,
       stateStore: {
@@ -660,6 +660,29 @@ describe('dailyImageScheduler', () => {
       }),
     );
     expect(sendMessageMock).not.toHaveBeenCalled();
+  });
+
+  it('should not send tomorrow graph updates after 23:59 window closes', async () => {
+    // Arrange
+    const state = createDailyState();
+    fetchMock.mockResolvedValue({
+      json: vi.fn(() => Promise.resolve(buildScheduleJson(buildGroupDataWithOutage()))),
+      ok: true,
+    });
+
+    // Act
+    await processWindowCheck(logger, state, {
+      fetchClient: fetchMock,
+      fetchPngBinaryFn: fetchPngBinaryMock,
+      now: new Date('2026-02-19T22:15:00Z'),
+      sendMessageFn: sendMessageMock,
+      sendPhotoFn: sendPhotoMock,
+    });
+
+    // Assert
+    expect(sendPhotoMock).not.toHaveBeenCalled();
+    expect(sendMessageMock).not.toHaveBeenCalled();
+    expect(state.hasSentInitial).toBe(false);
   });
 
 });
