@@ -1,9 +1,14 @@
 const fetch = require('node-fetch');
 const FormData = require('form-data');
 
-const { CHAT_ID, TG_BOT_URL, THREAD_ID } = require('../config/constants');
+const {
+  API_TOKEN,
+  CHAT_ID: DEFAULT_CHAT_ID,
+  THREAD_ID: DEFAULT_THREAD_ID,
+  TG_BOT_URL,
+} = require('../config/constants');
 
-function buildThreadPayload(threadId = THREAD_ID) {
+function buildThreadPayload(threadId) {
   if (!threadId) {
     return {};
   }
@@ -16,17 +21,18 @@ function buildThreadPayload(threadId = THREAD_ID) {
  * @param {string} message - HTML formatted message
  * @param {object} logger - Fastify logger instance
  * @param {object} options - Optional parameters
+ * @param {string} options.chatId - Chat ID override (defaults to env CHAT_ID)
  * @param {string} options.threadId - Thread ID override for this message
  * @returns {Promise<object|undefined>} Telegram API response
  */
 async function sendMessage(message, logger, options = {}) {
-  const { threadId } = options;
+  const { chatId = DEFAULT_CHAT_ID, threadId = DEFAULT_THREAD_ID } = options;
   try {
     const response = await fetch(`${TG_BOT_URL}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        chat_id: CHAT_ID,
+        chat_id: chatId,
         text: message,
         parse_mode: 'HTML',
         ...buildThreadPayload(threadId),
@@ -49,11 +55,12 @@ async function sendMessage(message, logger, options = {}) {
  * @param {string} caption - Optional photo caption
  * @param {object} logger - Fastify logger instance
  * @param {object} options - Optional parameters
+ * @param {string} options.chatId - Chat ID override (defaults to env CHAT_ID)
  * @param {string} options.threadId - Thread ID override for this photo
  * @returns {Promise<object|undefined>} Telegram API response
  */
 async function sendPhoto(photoInput, caption, logger, options = {}) {
-  const { threadId } = options;
+  const { chatId = DEFAULT_CHAT_ID, threadId } = options;
   try {
     let response;
     if (
@@ -62,7 +69,7 @@ async function sendPhoto(photoInput, caption, logger, options = {}) {
       photoInput.photoBuffer
     ) {
       const form = new FormData();
-      form.append('chat_id', CHAT_ID);
+      form.append('chat_id', chatId);
       form.append('photo', photoInput.photoBuffer, {
         contentType: photoInput.contentType || 'image/png',
         filename: photoInput.fileName || 'schedule.png',
@@ -86,7 +93,7 @@ async function sendPhoto(photoInput, caption, logger, options = {}) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          chat_id: CHAT_ID,
+          chat_id: chatId,
           photo: photoInput,
           caption,
           parse_mode: 'HTML',
