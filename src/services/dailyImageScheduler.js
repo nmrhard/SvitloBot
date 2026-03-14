@@ -1,21 +1,7 @@
 const crypto = require('crypto');
 const fetch = require('node-fetch');
 
-const {
-  DAILY_CHECK_END_HOUR,
-  DAILY_CHECK_END_MINUTE,
-  DAILY_CHECK_INTERVAL_MINUTES,
-  DAILY_CHECK_START_HOUR,
-  DAILY_CHECK_START_MINUTE,
-  DAILY_GROUP_KEY,
-  DAILY_JSON_MAX_AGE_HOURS,
-  DAILY_JSON_URL,
-  DAILY_PNG_URL,
-  DAILY_REQUIRE_NON_YES_VALUES,
-  DAILY_SEND_TODAY_INITIAL,
-  DAILY_THREAD_ID,
-  TIMEZONE,
-} = require('../config/constants');
+const { getActiveConfig, getEnvFallbackConfig } = require('./configService');
 const { DailyGraphState } = require('../models');
 const { formatTime } = require('../utils/timeFormatter');
 const { sendMessage, sendPhoto } = require('./telegramService');
@@ -96,7 +82,7 @@ function getTimeInZone(date, timeZone) {
   return new Date(date.toLocaleString('en-US', { timeZone }));
 }
 
-function formatDateKey(date, timeZone = TIMEZONE) {
+function formatDateKey(date, timeZone) {
   return new Intl.DateTimeFormat('en-CA', {
     day: '2-digit',
     month: '2-digit',
@@ -105,7 +91,7 @@ function formatDateKey(date, timeZone = TIMEZONE) {
   }).format(date);
 }
 
-function formatDateLabel(date, timeZone = TIMEZONE) {
+function formatDateLabel(date, timeZone) {
   return new Intl.DateTimeFormat('uk-UA', {
     day: '2-digit',
     month: '2-digit',
@@ -114,12 +100,7 @@ function formatDateLabel(date, timeZone = TIMEZONE) {
   }).format(date);
 }
 
-function getDelayToNextRun(
-  now = new Date(),
-  hour = DAILY_CHECK_START_HOUR,
-  minute = DAILY_CHECK_START_MINUTE,
-  timeZone = TIMEZONE,
-) {
+function getDelayToNextRun(now = new Date(), hour, minute, timeZone) {
   const nowInZone = getTimeInZone(now, timeZone);
   const nextRunInZone = new Date(nowInZone);
 
@@ -131,11 +112,7 @@ function getDelayToNextRun(
   return nextRunInZone.getTime() - nowInZone.getTime();
 }
 
-function getDelayToNextInterval(
-  now = new Date(),
-  intervalMinutes = DAILY_CHECK_INTERVAL_MINUTES,
-  timeZone = TIMEZONE,
-) {
+function getDelayToNextInterval(now = new Date(), intervalMinutes, timeZone) {
   const nowInZone = getTimeInZone(now, timeZone);
   const nextInZone = new Date(nowInZone);
 
@@ -150,18 +127,27 @@ function getDelayToNextInterval(
   return nextInZone.getTime() - nowInZone.getTime();
 }
 
-function getActiveWindowInfo(now = new Date(), timeZone = TIMEZONE) {
-  const nowInZone = getTimeInZone(now, timeZone);
-  const startMinutes = DAILY_CHECK_START_HOUR * 60 + DAILY_CHECK_START_MINUTE;
-  const endMinutes = DAILY_CHECK_END_HOUR * 60 + DAILY_CHECK_END_MINUTE;
-  const intervalMinutes = Math.max(DAILY_CHECK_INTERVAL_MINUTES, 1);
+function getActiveWindowInfo(now = new Date(), config) {
+  const {
+    checkEndHour,
+    checkEndMinute,
+    checkIntervalMinutes,
+    checkStartHour,
+    checkStartMinute,
+    timezone,
+  } = config;
+
+  const nowInZone = getTimeInZone(now, timezone);
+  const startMinutes = checkStartHour * 60 + checkStartMinute;
+  const endMinutes = checkEndHour * 60 + checkEndMinute;
+  const intervalMinutes = Math.max(checkIntervalMinutes, 1);
   const crossesMidnight = endMinutes <= startMinutes;
 
   const startToday = new Date(nowInZone);
-  startToday.setHours(DAILY_CHECK_START_HOUR, DAILY_CHECK_START_MINUTE, 0, 0);
+  startToday.setHours(checkStartHour, checkStartMinute, 0, 0);
 
   const endToday = new Date(nowInZone);
-  endToday.setHours(DAILY_CHECK_END_HOUR, DAILY_CHECK_END_MINUTE, 0, 0);
+  endToday.setHours(checkEndHour, checkEndMinute, 0, 0);
 
   let windowStart = startToday;
   let windowEnd = endToday;
@@ -192,8 +178,8 @@ function getActiveWindowInfo(now = new Date(), timeZone = TIMEZONE) {
     isActive && msUntilWindowEnd >= 0 && msUntilWindowEnd < finalCheckGraceMs;
   const isFinalCheck =
     (isActive &&
-      nowInZone.getHours() === DAILY_CHECK_END_HOUR &&
-      nowInZone.getMinutes() === DAILY_CHECK_END_MINUTE) ||
+      nowInZone.getHours() === checkEndHour &&
+      nowInZone.getMinutes() === checkEndMinute) ||
     isLastPlannedIntervalCheck ||
     isWithinFinalGrace;
 
@@ -234,8 +220,8 @@ function buildGroupHash(groupData) {
 function extractGroupDataForTargetDate(
   scheduleJson,
   targetDateKey,
-  groupKey = DAILY_GROUP_KEY,
-  timeZone = TIMEZONE,
+  groupKey,
+  timeZone,
 ) {
   const factData = scheduleJson?.fact?.data;
   if (!factData || typeof factData !== 'object') {
@@ -274,11 +260,7 @@ function extractTomorrowEpoch(scheduleJson) {
   return Number.isFinite(candidate) ? candidate : null;
 }
 
-function extractTomorrowGroupData(
-  scheduleJson,
-  groupKey = DAILY_GROUP_KEY,
-  timeZone = TIMEZONE,
-) {
+function extractTomorrowGroupData(scheduleJson, groupKey, timeZone) {
   const tomorrowEpoch = extractTomorrowEpoch(scheduleJson);
   if (!tomorrowEpoch) {
     return null;
@@ -299,12 +281,7 @@ function extractTomorrowGroupData(
   };
 }
 
-function extractTargetGroupData(
-  scheduleJson,
-  targetDateKey,
-  groupKey = DAILY_GROUP_KEY,
-  timeZone = TIMEZONE,
-) {
+function extractTargetGroupData(scheduleJson, targetDateKey, groupKey, timeZone) {
   const factData = scheduleJson?.fact?.data;
   if (!targetDateKey || !factData || typeof factData !== 'object') {
     return null;
@@ -334,11 +311,7 @@ function extractTargetGroupData(
   return null;
 }
 
-function extractTodayInfo(
-  scheduleJson,
-  groupKey = DAILY_GROUP_KEY,
-  timeZone = TIMEZONE,
-) {
+function extractTodayInfo(scheduleJson, groupKey, timeZone) {
   const todayEpoch = Number(scheduleJson?.fact?.today);
   if (!todayEpoch) {
     return null;
@@ -355,7 +328,7 @@ function extractTodayInfo(
   };
 }
 
-function isJsonFresh(scheduleJson, now = new Date()) {
+function isJsonFresh(scheduleJson, jsonMaxAgeHours, now = new Date()) {
   const lastUpdatedRaw = scheduleJson?.lastUpdated;
   if (!lastUpdatedRaw) {
     return {
@@ -372,12 +345,12 @@ function isJsonFresh(scheduleJson, now = new Date()) {
     };
   }
 
-  const maxAgeMs = DAILY_JSON_MAX_AGE_HOURS * 60 * 60 * 1000;
+  const maxAgeMs = jsonMaxAgeHours * 60 * 60 * 1000;
   const ageMs = now.getTime() - lastUpdatedDate.getTime();
   if (ageMs > maxAgeMs) {
     return {
       isFresh: false,
-      reason: `lastUpdated is older than ${DAILY_JSON_MAX_AGE_HOURS}h`,
+      reason: `lastUpdated is older than ${jsonMaxAgeHours}h`,
     };
   }
 
@@ -419,7 +392,7 @@ function hasNonYesValues(groupData) {
   );
 }
 
-function resetStateForWindow(state, windowStart, timeZone = TIMEZONE) {
+function resetStateForWindow(state, windowStart, timeZone) {
   const targetDate = new Date(windowStart);
   targetDate.setDate(targetDate.getDate() + 1);
 
@@ -461,7 +434,7 @@ async function runWithRetry(actionFn, logger, context) {
   return null;
 }
 
-async function fetchScheduleJson(fetchClient = fetch, url = DAILY_JSON_URL) {
+async function fetchScheduleJson(fetchClient = fetch, url) {
   const response = await fetchClient(url);
   if (!response.ok) {
     throw new Error(`JSON fetch failed with status ${response.status}`);
@@ -470,11 +443,7 @@ async function fetchScheduleJson(fetchClient = fetch, url = DAILY_JSON_URL) {
   return response.json();
 }
 
-async function fetchPngBinary(
-  fetchClient = fetch,
-  pngUrl = DAILY_PNG_URL,
-  cacheBustToken = Date.now(),
-) {
+async function fetchPngBinary(fetchClient = fetch, pngUrl, cacheBustToken = Date.now()) {
   const url = new URL(pngUrl);
   url.searchParams.set('ts', String(cacheBustToken));
 
@@ -500,11 +469,10 @@ async function processWindowCheck(
   logger,
   state = runtimeState,
   {
+    config = null,
     fetchClient = fetch,
     fetchPngBinaryFn = fetchPngBinary,
-    jsonUrl = DAILY_JSON_URL,
     now = new Date(),
-    pngUrl = DAILY_PNG_URL,
     stateStore = {
       getState: getPersistentDailyState,
       saveState: savePersistentDailyState,
@@ -513,16 +481,29 @@ async function processWindowCheck(
     sendPhotoFn = sendPhoto,
   } = {},
 ) {
-  const windowInfo = getActiveWindowInfo(now);
+  const activeConfig = config || (await getActiveConfig());
+  const {
+    chatId,
+    dailyGroupKey,
+    dailyJsonUrl,
+    dailyPngUrl,
+    dailyThreadId,
+    jsonMaxAgeHours,
+    requireNonYesValues,
+    sendTodayInitial,
+    timezone,
+  } = activeConfig;
+
+  const windowInfo = getActiveWindowInfo(now, activeConfig);
 
   if (isRunning) {
     logger?.warn('Skipping JSON check because previous check is still active');
     return windowInfo;
   }
 
-  const windowKey = formatDateKey(windowInfo.windowStart, TIMEZONE);
+  const windowKey = formatDateKey(windowInfo.windowStart, timezone);
   if (state.currentWindowKey !== windowKey) {
-    resetStateForWindow(state, windowInfo.windowStart, TIMEZONE);
+    resetStateForWindow(state, windowInfo.windowStart, timezone);
   }
 
   isRunning = true;
@@ -530,9 +511,9 @@ async function processWindowCheck(
   const formattedTime = formatTime(currentTime);
 
   try {
-    const scheduleJson = await fetchScheduleJson(fetchClient, jsonUrl);
+    const scheduleJson = await fetchScheduleJson(fetchClient, dailyJsonUrl);
     const persistentState = await stateStore.getState(logger);
-    const freshness = isJsonFresh(scheduleJson, now);
+    const freshness = isJsonFresh(scheduleJson, jsonMaxAgeHours, now);
     if (!freshness.isFresh) {
       logger?.warn('Skipping graph check due to stale JSON', {
         reason: freshness.reason,
@@ -541,10 +522,56 @@ async function processWindowCheck(
       return windowInfo;
     }
 
-    const today = extractTodayInfo(scheduleJson, DAILY_GROUP_KEY, TIMEZONE);
+    const today = extractTodayInfo(scheduleJson, dailyGroupKey, timezone);
     if (today) {
       if (state.currentTodayDateKey !== today.targetDateKey) {
         resetTodayStateForDate(state, today);
+      }
+
+      const todayHash = buildGroupHash(today.groupData);
+
+      if (
+        !state.hasSentTodayInitial &&
+        persistentState?.tomorrowDateKey === today.targetDateKey &&
+        persistentState?.tomorrowHash &&
+        persistentState.tomorrowHash !== todayHash &&
+        persistentState.missingNoticeDateKey === today.targetDateKey
+      ) {
+        const todayHasOutages = hasNonYesValues(today.groupData);
+        if (todayHasOutages) {
+          const photoPayload = await fetchPngBinaryFn(
+            fetchClient,
+            dailyPngUrl,
+            now.getTime(),
+          );
+          const caption = `⚠️ Графік на ${state.currentTodayDateLabel} ЗМІНЕНО - з'явилися відключення! Станом на ${formattedTime}`;
+          const response = await runWithRetry(
+            () =>
+              sendPhotoFn(photoPayload, caption, logger, {
+                chatId,
+                threadId: dailyThreadId,
+              }),
+            logger,
+            'Today schedule changed notification failed',
+          );
+          if (!response?.ok) {
+            throw new Error(
+              'Telegram API returned unexpected response for changed today schedule',
+            );
+          }
+
+          state.hasSentTodayInitial = true;
+          state.lastSentTodayHash = todayHash;
+          await stateStore.saveState(logger, {
+            missingNoticeDateKey: null,
+            todayDateKey: state.currentTodayDateKey,
+            todayHash,
+            todayLastNotifiedAt: new Date(),
+          });
+          logger?.info('Sent today schedule change notification', {
+            targetDate: state.currentTodayDateLabel,
+          });
+        }
       }
 
       if (
@@ -560,14 +587,11 @@ async function processWindowCheck(
         const todayValidation = validateGroupData(today.groupData);
         if (!todayValidation.isValid) {
           logger?.warn('Skipping today graph send due to invalid group data', {
-            group: DAILY_GROUP_KEY,
+            group: dailyGroupKey,
             reason: todayValidation.reason,
             targetDate: state.currentTodayDateLabel,
           });
-        } else if (
-          DAILY_REQUIRE_NON_YES_VALUES &&
-          !hasNonYesValues(today.groupData)
-        ) {
+        } else if (requireNonYesValues && !hasNonYesValues(today.groupData)) {
           const todayHash = buildGroupHash(today.groupData);
           if (
             state.hasSentTodayInitial &&
@@ -576,14 +600,15 @@ async function processWindowCheck(
           ) {
             const photoPayload = await fetchPngBinaryFn(
               fetchClient,
-              pngUrl,
+              dailyPngUrl,
               now.getTime(),
             );
             const caption = `Графік на ${state.currentTodayDateLabel} ОНОВЛЕНО - відключення скасовано. Станом на ${formattedTime}`;
             const response = await runWithRetry(
               () =>
                 sendPhotoFn(photoPayload, caption, logger, {
-                  threadId: DAILY_THREAD_ID,
+                  chatId,
+                  threadId: dailyThreadId,
                 }),
               logger,
               'Cancelled today outages graph send failed',
@@ -604,28 +629,26 @@ async function processWindowCheck(
               targetDate: state.currentTodayDateLabel,
             });
           } else {
-            logger?.warn(
-              'Skipping today graph send because data is all "yes"',
-              {
-                group: DAILY_GROUP_KEY,
-                targetDate: state.currentTodayDateLabel,
-              },
-            );
+            logger?.warn('Skipping today graph send because data is all "yes"', {
+              group: dailyGroupKey,
+              targetDate: state.currentTodayDateLabel,
+            });
           }
         } else {
           const todayHash = buildGroupHash(today.groupData);
           if (!state.hasSentTodayInitial) {
-            if (DAILY_SEND_TODAY_INITIAL) {
+            if (sendTodayInitial) {
               const photoPayload = await fetchPngBinaryFn(
                 fetchClient,
-                pngUrl,
+                dailyPngUrl,
                 now.getTime(),
               );
               const caption = `Графік відключень на ${state.currentTodayDateLabel}. Станом на ${formattedTime}`;
               const response = await runWithRetry(
                 () =>
                   sendPhotoFn(photoPayload, caption, logger, {
-                    threadId: DAILY_THREAD_ID,
+                    chatId,
+                    threadId: dailyThreadId,
                   }),
                 logger,
                 'Today graph send failed',
@@ -650,14 +673,15 @@ async function processWindowCheck(
           } else if (todayHash !== state.lastSentTodayHash) {
             const photoPayload = await fetchPngBinaryFn(
               fetchClient,
-              pngUrl,
+              dailyPngUrl,
               now.getTime(),
             );
             const caption = `Графік на ${state.currentTodayDateLabel} ОНОВЛЕНО. Станом на ${formattedTime}`;
             const response = await runWithRetry(
               () =>
                 sendPhotoFn(photoPayload, caption, logger, {
-                  threadId: DAILY_THREAD_ID,
+                  chatId,
+                  threadId: dailyThreadId,
                 }),
               logger,
               'Updated today graph send failed',
@@ -678,7 +702,7 @@ async function processWindowCheck(
         }
       } else {
         logger?.warn('Today group data is missing in JSON', {
-          group: DAILY_GROUP_KEY,
+          group: dailyGroupKey,
           targetDate: state.currentTodayDateLabel,
         });
       }
@@ -690,8 +714,8 @@ async function processWindowCheck(
       const tomorrow = extractTargetGroupData(
         scheduleJson,
         state.currentTargetDateKey,
-        DAILY_GROUP_KEY,
-        TIMEZONE,
+        dailyGroupKey,
+        timezone,
       );
 
       if (tomorrow) {
@@ -707,12 +731,9 @@ async function processWindowCheck(
         ) {
           state.hasSentInitial = true;
           state.lastSentHash = persistentState.tomorrowHash;
-          logger?.info(
-            'Restored tomorrow graph state from persistent storage',
-            {
-              targetDate: state.currentTargetDateLabel,
-            },
-          );
+          logger?.info('Restored tomorrow graph state from persistent storage', {
+            targetDate: state.currentTargetDateLabel,
+          });
         }
 
         if (
@@ -725,17 +746,14 @@ async function processWindowCheck(
         const groupValidation = validateGroupData(tomorrow.groupData);
         if (!groupValidation.isValid) {
           logger?.warn('Skipping graph send due to invalid group data', {
-            group: DAILY_GROUP_KEY,
+            group: dailyGroupKey,
             reason: groupValidation.reason,
             targetDate: state.currentTargetDateLabel,
           });
           return windowInfo;
         }
 
-        if (
-          DAILY_REQUIRE_NON_YES_VALUES &&
-          !hasNonYesValues(tomorrow.groupData)
-        ) {
+        if (requireNonYesValues && !hasNonYesValues(tomorrow.groupData)) {
           const groupHash = buildGroupHash(tomorrow.groupData);
           if (
             state.hasSentInitial &&
@@ -744,14 +762,15 @@ async function processWindowCheck(
           ) {
             const photoPayload = await fetchPngBinaryFn(
               fetchClient,
-              pngUrl,
+              dailyPngUrl,
               now.getTime(),
             );
             const caption = `Графік на ${state.currentTargetDateLabel} ОНОВЛЕНО - відключення скасовано. Станом на ${formattedTime}`;
             const response = await runWithRetry(
               () =>
                 sendPhotoFn(photoPayload, caption, logger, {
-                  threadId: DAILY_THREAD_ID,
+                  chatId,
+                  threadId: dailyThreadId,
                 }),
               logger,
               'Cancelled outages graph send failed',
@@ -775,14 +794,15 @@ async function processWindowCheck(
           } else if (windowInfo.isFinalCheck && !state.missingNoticeSent) {
             const photoPayload = await fetchPngBinaryFn(
               fetchClient,
-              pngUrl,
+              dailyPngUrl,
               now.getTime(),
             );
             const caption = `✅ Графік на ${state.currentTargetDateLabel} - відключень не заплановано. Станом на ${formattedTime}`;
             const response = await runWithRetry(
               () =>
                 sendPhotoFn(photoPayload, caption, logger, {
-                  threadId: DAILY_THREAD_ID,
+                  chatId,
+                  threadId: dailyThreadId,
                 }),
               logger,
               'No outages graph send failed',
@@ -793,48 +813,45 @@ async function processWindowCheck(
               );
             }
 
-            const groupHash = buildGroupHash(tomorrow.groupData);
+            const noOutagesHash = buildGroupHash(tomorrow.groupData);
             state.hasSentInitial = true;
-            state.lastSentHash = groupHash;
+            state.lastSentHash = noOutagesHash;
             state.missingNoticeSent = true;
             await stateStore.saveState(logger, {
               missingNoticeDateKey: state.currentTargetDateKey,
               tomorrowDateKey: state.currentTargetDateKey,
-              tomorrowHash: groupHash,
+              tomorrowHash: noOutagesHash,
               tomorrowLastNotifiedAt: new Date(),
             });
             logger?.info('Sent no outages graph at final check', {
               targetDate: state.currentTargetDateLabel,
             });
           } else {
-            logger?.warn(
-              'Skipping graph send because tomorrow data is all "yes"',
-              {
-                group: DAILY_GROUP_KEY,
-                hasSentInitial: state.hasSentInitial,
-                isFinalCheck: windowInfo.isFinalCheck,
-                missingNoticeSent: state.missingNoticeSent,
-                targetDate: state.currentTargetDateLabel,
-              },
-            );
+            logger?.warn('Skipping graph send because tomorrow data is all "yes"', {
+              group: dailyGroupKey,
+              hasSentInitial: state.hasSentInitial,
+              isFinalCheck: windowInfo.isFinalCheck,
+              missingNoticeSent: state.missingNoticeSent,
+              targetDate: state.currentTargetDateLabel,
+            });
           }
           return windowInfo;
         }
 
         const groupHash = buildGroupHash(tomorrow.groupData);
-        const isSameTargetDate =
-          previousTargetDateKey === tomorrow.targetDateKey;
+        const isSameTargetDate = previousTargetDateKey === tomorrow.targetDateKey;
         if (!state.hasSentInitial || !isSameTargetDate) {
           const photoPayload = await fetchPngBinaryFn(
             fetchClient,
-            pngUrl,
+            dailyPngUrl,
             now.getTime(),
           );
           const caption = `Графік відключень на ${state.currentTargetDateLabel}. Станом на ${formattedTime}`;
           const response = await runWithRetry(
             () =>
               sendPhotoFn(photoPayload, caption, logger, {
-                threadId: DAILY_THREAD_ID,
+                chatId,
+                threadId: dailyThreadId,
               }),
             logger,
             'Initial graph send failed',
@@ -856,14 +873,15 @@ async function processWindowCheck(
         } else if (groupHash !== state.lastSentHash) {
           const photoPayload = await fetchPngBinaryFn(
             fetchClient,
-            pngUrl,
+            dailyPngUrl,
             now.getTime(),
           );
           const caption = `Графік на ${state.currentTargetDateLabel} ОНОВЛЕНО. Станом на ${formattedTime}`;
           const response = await runWithRetry(
             () =>
               sendPhotoFn(photoPayload, caption, logger, {
-                threadId: DAILY_THREAD_ID,
+                chatId,
+                threadId: dailyThreadId,
               }),
             logger,
             'Updated graph send failed',
@@ -891,7 +909,8 @@ async function processWindowCheck(
         const response = await runWithRetry(
           () =>
             sendMessageFn(notice, logger, {
-              threadId: DAILY_THREAD_ID,
+              chatId,
+              threadId: dailyThreadId,
             }),
           logger,
           'Missing graph notice send failed',
@@ -915,7 +934,7 @@ async function processWindowCheck(
   } catch (error) {
     logger?.error('Window check failed', {
       error: error.message,
-      jsonUrl,
+      jsonUrl: dailyJsonUrl,
       targetDate: state.currentTargetDateLabel,
     });
   } finally {
@@ -925,10 +944,15 @@ async function processWindowCheck(
   return windowInfo;
 }
 
-function scheduleNextTick(logger, delayMs) {
+async function scheduleNextTick(logger, delayMs) {
   nextCheckTimeout = setTimeout(async () => {
-    await processWindowCheck(logger);
-    const nextDelay = getDelayToNextInterval();
+    const config = await getActiveConfig();
+    await processWindowCheck(logger, runtimeState, { config });
+    const nextDelay = getDelayToNextInterval(
+      new Date(),
+      config.checkIntervalMinutes,
+      config.timezone,
+    );
     scheduleNextTick(logger, nextDelay);
   }, delayMs);
 }
@@ -940,20 +964,23 @@ function clearSchedulerTimers() {
   }
 }
 
-function startDailyImageScheduler(logger) {
+async function startDailyImageScheduler(logger) {
   clearSchedulerTimers();
 
+  const config = await getActiveConfig();
+
   logger?.info('Daily graph scheduler initialized', {
-    checkEndHour: DAILY_CHECK_END_HOUR,
-    checkEndMinute: DAILY_CHECK_END_MINUTE,
-    checkIntervalMinutes: DAILY_CHECK_INTERVAL_MINUTES,
-    checkStartHour: DAILY_CHECK_START_HOUR,
-    checkStartMinute: DAILY_CHECK_START_MINUTE,
-    group: DAILY_GROUP_KEY,
+    checkEndHour: config.checkEndHour,
+    checkEndMinute: config.checkEndMinute,
+    checkIntervalMinutes: config.checkIntervalMinutes,
+    checkStartHour: config.checkStartHour,
+    checkStartMinute: config.checkStartMinute,
+    group: config.dailyGroupKey,
     initialDelayMs: 0,
-    jsonUrl: DAILY_JSON_URL,
-    pngUrl: DAILY_PNG_URL,
-    timeZone: TIMEZONE,
+    jsonUrl: config.dailyJsonUrl,
+    pngUrl: config.dailyPngUrl,
+    source: config.contactId ? 'database' : 'env',
+    timeZone: config.timezone,
   });
   scheduleNextTick(logger, 0);
 }
