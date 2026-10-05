@@ -6,12 +6,15 @@
     "start": "node src/app.js",
     "start:web": "node src/app.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
   },
   "keywords": [],
   "author": "Roman Lytvynov",
   "license": "ISC",
   "dependencies": {
+    "@fastify/cors": "11.2.0",
     "dotenv": "^16.4.7",
     "fastify": "^5.1.0",
     "firebase-admin": "13.7.0",
@@ -22,6 +25,8 @@
     "sqlite3": "^5.1.7"
   },
   "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.11.0",
     "vitest": "4.0.16"
   }
 }
