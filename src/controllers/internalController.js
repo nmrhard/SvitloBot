@@ -1,5 +1,6 @@
 const { INTERNAL_CHECK_API_KEY } = require('../config/constants');
 const { processWindowCheck } = require('../services');
+const { secureCompare } = require('../utils/secureCompare');
 
 /**
  * Execute one scheduler check via protected endpoint.
@@ -14,7 +15,7 @@ async function runDailyCheck(request, reply) {
     return;
   }
 
-  if (apiKey !== configuredApiKey) {
+  if (!secureCompare(apiKey, configuredApiKey)) {
     reply.code(401).send({ error: 'Unauthorized' });
     return;
   }

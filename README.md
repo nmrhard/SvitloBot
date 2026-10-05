@@ -45,6 +45,7 @@ Node.js бот для Telegram, який:
 ### Monitor webhook
 
 - `POST /`
+- секрет `MONITOR_WEBHOOK_SECRET`: заголовок `x-webhook-secret` або query `?secret=` (для провайдерів без кастомних заголовків). Без секрету — `401`, якщо env не задано — `503`.
 - body:
   - `monitor_status`: `online` або `offline`
   - `timestamp`: Unix timestamp (секунди)
@@ -110,6 +111,10 @@ DAILY_CHECK_END_HOUR=0
 DAILY_CHECK_END_MINUTE=0
 DAILY_CHECK_INTERVAL_MINUTES=30
 DAILY_SEND_TODAY_INITIAL=false
+
+MONITOR_WEBHOOK_SECRET=long_random_string
+# Домени UI через кому; поза production за замовчуванням http://localhost:4321
+CORS_ORIGINS=https://your-ui.netlify.app
 ```
 
 ## Нотатки
