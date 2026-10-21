@@ -71,6 +71,15 @@ const INTERNAL_CHECK_API_KEY = process.env.INTERNAL_CHECK_API_KEY;
 
 const TIMEZONE = process.env.TIMEZONE || 'Europe/Kyiv';
 
+// DTEK outage reason lookup via GitHub Actions (disabled when token/repo are missing)
+const GITHUB_DISPATCH_TOKEN = process.env.GITHUB_DISPATCH_TOKEN;
+const GITHUB_REPO = process.env.GITHUB_REPO;
+const parsedReasonTimeoutMinutes = Number(process.env.OUTAGE_REASON_TIMEOUT_MINUTES);
+const OUTAGE_REASON_TIMEOUT_MINUTES =
+  Number.isFinite(parsedReasonTimeoutMinutes) && parsedReasonTimeoutMinutes > 0
+    ? parsedReasonTimeoutMinutes
+    : 3;
+
 module.exports = {
   API_TOKEN,
   CHAT_ID,
@@ -87,6 +96,9 @@ module.exports = {
   INTERNAL_CHECK_API_KEY,
   DAILY_PNG_URL,
   DAILY_THREAD_ID,
+  GITHUB_DISPATCH_TOKEN,
+  GITHUB_REPO,
+  OUTAGE_REASON_TIMEOUT_MINUTES,
   statuses,
   TIMEZONE,
   TG_BOT_URL,

@@ -1,4 +1,10 @@
-const { processStatusChange, sendMessage } = require('../services');
+const {
+  flushPendingOutage,
+  isOutageReasonEnabled,
+  processStatusChange,
+  queueOfflineMessage,
+  sendMessage,
+} = require('../services');
 
 /**
  * Handle monitor status webhook from Hetrix
@@ -12,7 +18,14 @@ async function handleMonitorStatus(request, reply) {
 
   // Skip sending message for stale/out-of-order events
   if (message) {
-    await sendMessage(message, request.log);
+    if (status === 'offline' && isOutageReasonEnabled()) {
+      // Sent later together with DTEK outage reason
+      await queueOfflineMessage(message, currentTime, request.log);
+    } else {
+      // Keep chronological order if offline message is still waiting for reason
+      await flushPendingOutage(request.log);
+      await sendMessage(message, request.log);
+    }
   }
 
   reply.send({ success: true });

@@ -27,6 +27,7 @@ vi.mock('../../services/telegramService', () => ({
 
 import { buildApp } from '../../app';
 import sequelize from '../../config/database';
+import PendingOutage from '../../models/PendingOutage';
 
 describe('Monitor Routes', () => {
   let app;
@@ -40,6 +41,7 @@ describe('Monitor Routes', () => {
       );
     `);
     await sequelize.query('DELETE FROM status_timestamps;');
+    await PendingOutage.sync({ force: true });
     app = await buildApp();
     await app.ready();
   });
@@ -123,6 +125,30 @@ describe('Monitor Routes', () => {
 
       // Assert
       expect(response.statusCode).toBe(400);
+    });
+  });
+
+  describe('POST / pending outage', () => {
+    it('should flush pending offline message on online event', async () => {
+      // Arrange
+      await PendingOutage.upsert({
+        id: 1,
+        eventTime: 1729699300,
+        message: 'pending offline message',
+        deadlineAt: Math.floor(Date.now() / 1000) + 180,
+      });
+
+      // Act
+      const response = await app.inject({
+        method: 'POST',
+        url: '/',
+        headers: webhookHeaders,
+        payload: { monitor_status: 'online', timestamp: 1729699400 },
+      });
+
+      // Assert
+      expect(response.statusCode).toBe(200);
+      expect((await PendingOutage.findByPk(1)).eventTime).toBeNull();
     });
   });
 

@@ -7,6 +7,7 @@ require('dotenv').config();
 
 const registerRoutes = require('./routes');
 const sequelize = require('./config/database');
+const { restorePendingOutage } = require('./services');
 
 const PORT = process.env.PORT || 3000;
 
@@ -78,6 +79,8 @@ async function start() {
   try {
     await sequelize.sync();
     fastify.log.info('Database synced');
+
+    await restorePendingOutage(fastify.log);
 
     await fastify.listen({ port: PORT, host: '0.0.0.0' });
     fastify.log.info(`Server running on http://localhost:${PORT}`);

@@ -13,11 +13,13 @@ vi.mock('../../services', () => ({
 }));
 
 import { buildApp } from '../../app';
+import PendingOutage from '../../models/PendingOutage';
 
 describe('Internal Routes', () => {
   let app;
 
   beforeAll(async () => {
+    await PendingOutage.sync({ force: true });
     app = await buildApp();
     await app.ready();
   });
@@ -50,5 +52,62 @@ describe('Internal Routes', () => {
         ok: true,
       }),
     );
+  });
+
+  describe('POST /internal/outage-reason', () => {
+    const payload = { eventTime: 1729699200, status: 'error', error: 'blocked' };
+
+    it('should reject request without API key', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/internal/outage-reason',
+        payload,
+      });
+
+      expect(response.statusCode).toBe(401);
+    });
+
+    it('should reject invalid status', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/internal/outage-reason',
+        headers: { 'x-api-key': 'test-internal-key' },
+        payload: { ...payload, status: 'unknown' },
+      });
+
+      expect(response.statusCode).toBe(400);
+    });
+
+    it('should apply reason to matching pending message', async () => {
+      await PendingOutage.upsert({
+        id: 1,
+        eventTime: 1729699200,
+        message: 'pending offline message',
+        deadlineAt: Math.floor(Date.now() / 1000) + 180,
+      });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/internal/outage-reason',
+        headers: { 'x-api-key': 'test-internal-key' },
+        payload,
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ ok: true, applied: true });
+      expect((await PendingOutage.findByPk(1)).eventTime).toBeNull();
+    });
+
+    it('should report stale callback as not applied', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/internal/outage-reason',
+        headers: { 'x-api-key': 'test-internal-key' },
+        payload: { ...payload, eventTime: 1 },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ ok: true, applied: false });
+    });
   });
 });
