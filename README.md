@@ -55,6 +55,35 @@ Node.js бот для Telegram, який:
 - надсилається повідомлення в Telegram;
 - зберігається новий стан у БД.
 
+### Причина відключення (ДТЕК)
+
+Якщо задані `GITHUB_DISPATCH_TOKEN` і `GITHUB_REPO`, повідомлення про **зникнення** світла надсилається разом із причиною з сайту ДТЕК:
+
+1. Бот зберігає повідомлення в `pending_outage` і запускає workflow `outage-reason.yml` через `repository_dispatch`.
+2. Workflow (`scraper/`, Playwright — сайт ДТЕК за Incapsula) отримує `sub_type`, `start_date`, `end_date` для адреси і шле `POST /internal/outage-reason` (`x-api-key`).
+3. Бот надсилає повідомлення з рядком `⚠️ Причина: …`.
+
+Якщо відповіді немає за `OUTAGE_REASON_TIMEOUT_MINUTES` (3 хв), помилка скрейпера або dispatch не вдався — повідомлення йде без причини. Якщо світло повернулося раніше — спочатку надсилається відкладене повідомлення про відключення, потім про увімкнення. Повідомлення про увімкнення не змінюється.
+
+GitHub Secrets для workflow:
+
+| Secret | Опис |
+| --- | --- |
+| `DTEK_REGION` | `k` — Київ, `kr` — Київська обл., `dn`, `o`, `d` |
+| `DTEK_CITY` | Місто, як у підказці на сайті ДТЕК (для `k` — порожнє) |
+| `DTEK_STREET` | Вулиця 1 в 1 з підказкою сайту (`вул. …`) |
+| `DTEK_HOUSE` | Номер будинку |
+| `REASON_CALLBACK_URL` | `https://<bot>/internal/outage-reason` |
+| `CHECK_API_KEY` | той самий, що `INTERNAL_CHECK_API_KEY` |
+
+`GITHUB_DISPATCH_TOKEN` — fine-grained PAT лише на цей репозиторій з правом **Contents: Read and write**.
+
+### Internal: outage reason
+
+- `POST /internal/outage-reason`, заголовок `x-api-key: INTERNAL_CHECK_API_KEY`
+- body: `eventTime` (Unix, секунди), `status` (`found` / `no_outage` / `error`), `subType`, `startDate`, `endDate`, `error`
+- відповідь: `{ "ok": true, "applied": true|false }` (`false` — подія вже надіслана або застаріла)
+
 ## Telegram: треди
 
 - `CHAT_ID` — чат
@@ -113,6 +142,11 @@ DAILY_CHECK_INTERVAL_MINUTES=30
 DAILY_SEND_TODAY_INITIAL=false
 
 MONITOR_WEBHOOK_SECRET=long_random_string
+
+# Причина відключення з сайту ДТЕК (вимкнено, якщо не задано)
+GITHUB_DISPATCH_TOKEN=github_pat_xxx
+GITHUB_REPO=nmrhard/SvitloBot
+OUTAGE_REASON_TIMEOUT_MINUTES=3
 # Домени UI через кому; поза production за замовчуванням http://localhost:4321
 CORS_ORIGINS=https://your-ui.netlify.app
 ```
