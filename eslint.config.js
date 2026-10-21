@@ -3,7 +3,7 @@ const js = require('@eslint/js');
 module.exports = [
   js.configs.recommended,
   {
-    ignores: ['node_modules/**', 'dist/**', 'coverage/**', '.vitest.sqlite'],
+    ignores: ['node_modules/**', 'scraper/node_modules/**', 'dist/**', 'coverage/**', '.vitest.sqlite'],
   },
   {
     languageOptions: {
@@ -46,6 +46,15 @@ module.exports = [
         beforeAll: 'readonly',
         afterAll: 'readonly',
         vi: 'readonly',
+      },
+    },
+  },
+  {
+    files: ['scraper/**/*.js'],
+    languageOptions: {
+      globals: {
+        fetch: 'readonly',
+        URLSearchParams: 'readonly',
       },
     },
   },

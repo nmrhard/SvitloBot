@@ -1,0 +1,55 @@
+name: DTEK Outage Reason
+
+on:
+  repository_dispatch:
+    types: [outage-reason]
+  workflow_dispatch:
+    inputs:
+      event_time:
+        description: 'Offline event UNIX timestamp (must match pending event in bot)'
+        required: true
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  fetch-reason:
+    runs-on: ubuntu-latest
+    # Bot sends message without reason after OUTAGE_REASON_TIMEOUT_MINUTES anyway
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: scraper
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: scraper/package-lock.json
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('scraper/package-lock.json') }}
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Fetch reason and notify bot
+        env:
+          REGION: ${{ secrets.DTEK_REGION }}
+          CITY: ${{ secrets.DTEK_CITY }}
+          STREET: ${{ secrets.DTEK_STREET }}
+          HOUSE: ${{ secrets.DTEK_HOUSE }}
+          EVENT_TIME: ${{ github.event.client_payload.eventTime || inputs.event_time }}
+          CALLBACK_URL: ${{ secrets.REASON_CALLBACK_URL }}
+          CALLBACK_API_KEY: ${{ secrets.CHECK_API_KEY }}
+        run: node index.js
