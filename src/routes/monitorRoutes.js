@@ -1,4 +1,5 @@
 const { handleMonitorStatus } = require('../controllers');
+const { verifyWebhookSecret } = require('../middleware/webhookSecret');
 
 const monitorStatusSchema = {
   body: {
@@ -18,7 +19,8 @@ const monitorStatusSchema = {
 async function monitorRoutes(fastify) {
   fastify.post(
     '/',
-    { schema: monitorStatusSchema },
+    // onRequest runs before body validation, so unauthenticated calls get 401
+    { schema: monitorStatusSchema, onRequest: verifyWebhookSecret },
     handleMonitorStatus
   );
 }

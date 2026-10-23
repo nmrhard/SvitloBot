@@ -1,0 +1,16 @@
+{
+  "name": "svitlobot-dtek-scraper",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Fetches DTEK outage reason for one address (runs in GitHub Actions)",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "playwright": "1.64.1"
+  }
+}

@@ -12,6 +12,9 @@ process.env.CHAT_ID = 'test-chat-id';
 process.env.API_TOKEN = 'test-token';
 process.env.THREAD_ID = 'test-thread-id';
 process.env.DATABASE_URL = 'postgres://localhost:5432/test';
+process.env.MONITOR_WEBHOOK_SECRET = 'test-webhook-secret';
+
+const webhookHeaders = { 'x-webhook-secret': 'test-webhook-secret' };
 
 vi.mock('../../services/statusService', () => ({
   processStatusChange: vi.fn(async () => 'mock status message'),
@@ -24,6 +27,7 @@ vi.mock('../../services/telegramService', () => ({
 
 import { buildApp } from '../../app';
 import sequelize from '../../config/database';
+import PendingOutage from '../../models/PendingOutage';
 
 describe('Monitor Routes', () => {
   let app;
@@ -37,6 +41,7 @@ describe('Monitor Routes', () => {
       );
     `);
     await sequelize.query('DELETE FROM status_timestamps;');
+    await PendingOutage.sync({ force: true });
     app = await buildApp();
     await app.ready();
   });
@@ -57,6 +62,7 @@ describe('Monitor Routes', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/',
+        headers: webhookHeaders,
         payload,
       });
 
@@ -76,6 +82,7 @@ describe('Monitor Routes', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/',
+        headers: webhookHeaders,
         payload,
       });
 
@@ -94,6 +101,7 @@ describe('Monitor Routes', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/',
+        headers: webhookHeaders,
         payload,
       });
 
@@ -111,11 +119,98 @@ describe('Monitor Routes', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/',
+        headers: webhookHeaders,
         payload,
       });
 
       // Assert
       expect(response.statusCode).toBe(400);
+    });
+  });
+
+  describe('POST / pending outage', () => {
+    it('should flush pending offline message on online event', async () => {
+      // Arrange
+      await PendingOutage.upsert({
+        id: 1,
+        eventTime: 1729699300,
+        message: 'pending offline message',
+        deadlineAt: Math.floor(Date.now() / 1000) + 180,
+      });
+
+      // Act
+      const response = await app.inject({
+        method: 'POST',
+        url: '/',
+        headers: webhookHeaders,
+        payload: { monitor_status: 'online', timestamp: 1729699400 },
+      });
+
+      // Assert
+      expect(response.statusCode).toBe(200);
+      expect((await PendingOutage.findByPk(1)).eventTime).toBeNull();
+    });
+  });
+
+  describe('POST / webhook secret', () => {
+    const payload = { monitor_status: 'offline', timestamp: 1729699200 };
+
+    it('should reject request without secret', async () => {
+      // Act
+      const response = await app.inject({ method: 'POST', url: '/', payload });
+
+      // Assert
+      expect(response.statusCode).toBe(401);
+    });
+
+    it('should reject request with wrong secret', async () => {
+      // Act
+      const response = await app.inject({
+        method: 'POST',
+        url: '/',
+        headers: { 'x-webhook-secret': 'wrong' },
+        payload,
+      });
+
+      // Assert
+      expect(response.statusCode).toBe(401);
+    });
+
+    it('should reject unauthenticated request before body validation', async () => {
+      // Act
+      const response = await app.inject({ method: 'POST', url: '/', payload: {} });
+
+      // Assert
+      expect(response.statusCode).toBe(401);
+    });
+
+    it('should accept secret passed as query param', async () => {
+      // Act
+      const response = await app.inject({
+        method: 'POST',
+        url: '/?secret=test-webhook-secret',
+        payload,
+      });
+
+      // Assert
+      expect(response.statusCode).toBe(200);
+    });
+
+    it('should respond 503 when secret is not configured', async () => {
+      // Arrange
+      delete process.env.MONITOR_WEBHOOK_SECRET;
+
+      // Act
+      const response = await app.inject({
+        method: 'POST',
+        url: '/',
+        headers: webhookHeaders,
+        payload,
+      });
+
+      // Assert
+      process.env.MONITOR_WEBHOOK_SECRET = 'test-webhook-secret';
+      expect(response.statusCode).toBe(503);
     });
   });
 
