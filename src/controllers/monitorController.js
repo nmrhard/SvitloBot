@@ -20,10 +20,20 @@ async function handleMonitorStatus(request, reply) {
   if (message) {
     if (status === 'offline' && isOutageReasonEnabled()) {
       // Sent later together with DTEK outage reason
-      await queueOfflineMessage(message, currentTime, request.log);
+      try {
+        await queueOfflineMessage(message, currentTime, request.log);
+      } catch (error) {
+        request.log.error('Error queuing offline message, sending now:', error.message);
+        await sendMessage(message, request.log);
+      }
     } else {
-      // Keep chronological order if offline message is still waiting for reason
-      await flushPendingOutage(request.log);
+      // Keep chronological order if offline message is still waiting for reason,
+      // but never lose the current message because of it
+      try {
+        await flushPendingOutage(request.log);
+      } catch (error) {
+        request.log.error('Error flushing pending outage:', error.message);
+      }
       await sendMessage(message, request.log);
     }
   }
