@@ -43,6 +43,7 @@ jobs:
           npm ci
           npx playwright install --with-deps chromium
 
+      # Env names differ from secrets: STREET <- DTEK_STREET, CALLBACK_URL <- REASON_CALLBACK_URL, etc.
       - name: Fetch reason and notify bot
         env:
           REGION: ${{ secrets.DTEK_REGION }}
