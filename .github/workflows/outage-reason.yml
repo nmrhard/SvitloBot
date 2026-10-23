@@ -53,4 +53,5 @@ jobs:
           EVENT_TIME: ${{ github.event.client_payload.eventTime || inputs.event_time }}
           CALLBACK_URL: ${{ secrets.REASON_CALLBACK_URL }}
           CALLBACK_API_KEY: ${{ secrets.CHECK_API_KEY }}
+        timeout-minutes: 3
         run: node index.js

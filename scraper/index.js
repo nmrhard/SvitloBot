@@ -12,8 +12,12 @@ const {
   CALLBACK_API_KEY,
 } = process.env;
 
-const RETRIES_MAX_COUNT = 2;
+// Bot waits OUTAGE_REASON_TIMEOUT_MINUTES (3 min) including runner startup, keep within ~2 min
+const RETRIES_MAX_COUNT = 1;
 const RETRIES_TIMEOUT = 5000;
+const PAGE_TIMEOUT = 30000;
+const AJAX_TIMEOUT = 20000;
+const CALLBACK_TIMEOUT = 60000;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -29,15 +33,20 @@ async function fetchDtekInfo() {
 
   try {
     const page = await browser.newPage();
+    page.setDefaultTimeout(PAGE_TIMEOUT);
+
+    console.log('Opening DTEK page...');
     await page.goto(getShutdownsPage(REGION), { waitUntil: 'load' });
 
+    console.log('Waiting for CSRF token...');
     const csrfTag = await page.waitForSelector('meta[name="csrf-token"]', {
       state: 'attached',
     });
     const csrfToken = await csrfTag.getAttribute('content');
 
-    return await page.evaluate(
-      async ({ region, city, street, token }) => {
+    console.log('Requesting outage info...');
+    const { status, text } = await page.evaluate(
+      async ({ region, city, street, token, timeout }) => {
         const formData = new URLSearchParams();
         formData.append('method', 'getHomeNum');
 
@@ -58,11 +67,25 @@ async function fetchDtekInfo() {
             'x-csrf-token': token,
           },
           body: formData,
+          // page.evaluate has no timeout of its own
+          signal: AbortSignal.timeout(timeout),
         });
-        return response.json();
+        return { status: response.status, text: await response.text() };
       },
-      { region: String(REGION).toLowerCase(), city: CITY, street: STREET, token: csrfToken },
+      {
+        region: String(REGION).toLowerCase(),
+        city: CITY,
+        street: STREET,
+        token: csrfToken,
+        timeout: AJAX_TIMEOUT,
+      },
     );
+
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error(`non-JSON response ${status}: ${text.slice(0, 200)}`);
+    }
   } finally {
     await browser.close();
   }
@@ -90,6 +113,7 @@ async function sendCallback(payload) {
       'x-api-key': CALLBACK_API_KEY,
     },
     body: JSON.stringify({ eventTime: Number(EVENT_TIME), ...payload }),
+    signal: AbortSignal.timeout(CALLBACK_TIMEOUT),
   });
 
   console.log(`Callback responded ${response.status}: ${await response.text()}`);
