@@ -97,8 +97,11 @@ async function sendCallback(payload) {
 }
 
 async function run() {
-  if (!EVENT_TIME || !CALLBACK_URL || !CALLBACK_API_KEY || !STREET || !HOUSE) {
-    throw new Error('Missing EVENT_TIME, CALLBACK_URL, CALLBACK_API_KEY, STREET or HOUSE');
+  const missing = Object.entries({ EVENT_TIME, CALLBACK_URL, CALLBACK_API_KEY, STREET, HOUSE })
+    .filter(([, value]) => !value)
+    .map(([name]) => name);
+  if (missing.length) {
+    throw new Error(`Missing env: ${missing.join(', ')}`);
   }
 
   let payload;
