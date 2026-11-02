@@ -1,9 +1,9 @@
 const {
-  flushPendingOutage,
   isOutageReasonEnabled,
   processStatusChange,
-  queueOfflineMessage,
   sendMessage,
+  startReasonLookup,
+  stopReasonLookup,
 } = require('../services');
 
 /**
@@ -18,23 +18,29 @@ async function handleMonitorStatus(request, reply) {
 
   // Skip sending message for stale/out-of-order events
   if (message) {
+    // Reason lookup failures must never block status messages
+    if (status !== 'offline') {
+      try {
+        await stopReasonLookup(request.log);
+      } catch (error) {
+        request.log.error('Error stopping outage reason lookup:', error.message);
+      }
+    }
+
+    const response = await sendMessage(message, request.log);
+
     if (status === 'offline' && isOutageReasonEnabled()) {
-      // Sent later together with DTEK outage reason
       try {
-        await queueOfflineMessage(message, currentTime, request.log);
+        // DTEK reason is added to this message later via edit
+        await startReasonLookup(
+          message,
+          currentTime,
+          response?.result?.message_id,
+          request.log,
+        );
       } catch (error) {
-        request.log.error('Error queuing offline message, sending now:', error.message);
-        await sendMessage(message, request.log);
+        request.log.error('Error starting outage reason lookup:', error.message);
       }
-    } else {
-      // Keep chronological order if offline message is still waiting for reason,
-      // but never lose the current message because of it
-      try {
-        await flushPendingOutage(request.log);
-      } catch (error) {
-        request.log.error('Error flushing pending outage:', error.message);
-      }
-      await sendMessage(message, request.log);
     }
   }
 

@@ -74,11 +74,17 @@ const TIMEZONE = process.env.TIMEZONE || 'Europe/Kyiv';
 // DTEK outage reason lookup via GitHub Actions (disabled when token/repo are missing)
 const GITHUB_DISPATCH_TOKEN = process.env.GITHUB_DISPATCH_TOKEN;
 const GITHUB_REPO = process.env.GITHUB_REPO;
-const parsedReasonTimeoutMinutes = Number(process.env.OUTAGE_REASON_TIMEOUT_MINUTES);
-const OUTAGE_REASON_TIMEOUT_MINUTES =
-  Number.isFinite(parsedReasonTimeoutMinutes) && parsedReasonTimeoutMinutes > 0
-    ? parsedReasonTimeoutMinutes
-    : 3;
+// DTEK publishes reason with a delay, so scraper reruns until reason is found
+const parsedReasonCheckIntervalMinutes = Number(process.env.OUTAGE_REASON_CHECK_INTERVAL_MINUTES);
+const OUTAGE_REASON_CHECK_INTERVAL_MINUTES =
+  Number.isFinite(parsedReasonCheckIntervalMinutes) && parsedReasonCheckIntervalMinutes > 0
+    ? parsedReasonCheckIntervalMinutes
+    : 10;
+const parsedReasonMaxWaitMinutes = Number(process.env.OUTAGE_REASON_MAX_WAIT_MINUTES);
+const OUTAGE_REASON_MAX_WAIT_MINUTES =
+  Number.isFinite(parsedReasonMaxWaitMinutes) && parsedReasonMaxWaitMinutes > 0
+    ? parsedReasonMaxWaitMinutes
+    : 60;
 
 module.exports = {
   API_TOKEN,
@@ -98,7 +104,8 @@ module.exports = {
   DAILY_THREAD_ID,
   GITHUB_DISPATCH_TOKEN,
   GITHUB_REPO,
-  OUTAGE_REASON_TIMEOUT_MINUTES,
+  OUTAGE_REASON_CHECK_INTERVAL_MINUTES,
+  OUTAGE_REASON_MAX_WAIT_MINUTES,
   statuses,
   TIMEZONE,
   TG_BOT_URL,

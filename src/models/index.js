@@ -2,7 +2,7 @@ const ContactList = require('./ContactList');
 const DailyCheckSchedule = require('./DailyCheckSchedule');
 const DailyGraphState = require('./DailyGraphState');
 const OfflineStatus = require('./OfflineStatus');
-const PendingOutage = require('./PendingOutage');
+const OutageReasonLookup = require('./OutageReasonLookup');
 
 ContactList.hasMany(DailyCheckSchedule, {
   foreignKey: 'contactId',
@@ -20,6 +20,6 @@ module.exports = {
   DailyCheckSchedule,
   DailyGraphState,
   OfflineStatus,
-  PendingOutage,
+  OutageReasonLookup,
 };
 

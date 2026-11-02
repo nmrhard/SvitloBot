@@ -50,6 +50,39 @@ async function sendMessage(message, logger, options = {}) {
 }
 
 /**
+ * Edit text of previously sent Telegram message
+ * @param {number} messageId - Telegram message_id
+ * @param {string} message - New HTML formatted text
+ * @param {object} logger - Fastify logger instance
+ * @param {object} options - Optional parameters
+ * @param {string} options.chatId - Chat ID override (defaults to env CHAT_ID)
+ * @returns {Promise<object|undefined>} Telegram API response
+ */
+async function editMessage(messageId, message, logger, options = {}) {
+  const { chatId = DEFAULT_CHAT_ID } = options;
+  try {
+    const response = await fetch(`${TG_BOT_URL}/editMessageText`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        message_id: messageId,
+        text: message,
+        parse_mode: 'HTML',
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Telegram API Error: ${response.statusText}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    logger?.error('Error editing message:', error.message);
+  }
+}
+
+/**
  * Send photo to Telegram chat
  * @param {string|object} photoInput - Public photo URL or binary payload
  * @param {string} caption - Optional photo caption
@@ -113,6 +146,7 @@ async function sendPhoto(photoInput, caption, logger, options = {}) {
 }
 
 module.exports = {
+  editMessage,
   sendMessage,
   sendPhoto,
 };

@@ -12,7 +12,7 @@ const {
   CALLBACK_API_KEY,
 } = process.env;
 
-// Bot waits OUTAGE_REASON_TIMEOUT_MINUTES (3 min) including runner startup, keep within ~2 min
+// Bot reruns scraper every OUTAGE_REASON_CHECK_INTERVAL_MINUTES, keep a single run within ~2 min
 const RETRIES_MAX_COUNT = 1;
 const RETRIES_TIMEOUT = 5000;
 const PAGE_TIMEOUT = 30000;
