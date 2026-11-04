@@ -57,13 +57,13 @@ Node.js бот для Telegram, який:
 
 ### Причина відключення (ДТЕК)
 
-Якщо задані `GITHUB_DISPATCH_TOKEN` і `GITHUB_REPO`, повідомлення про **зникнення** світла надсилається разом із причиною з сайту ДТЕК:
+Якщо задані `GITHUB_DISPATCH_TOKEN` і `GITHUB_REPO`, до повідомлення про **зникнення** світла пізніше дописується причина з сайту ДТЕК:
 
-1. Бот зберігає повідомлення в `pending_outage` і запускає workflow `outage-reason.yml` через `repository_dispatch`.
-2. Workflow (`scraper/`, Playwright — сайт ДТЕК за Incapsula) отримує `sub_type`, `start_date`, `end_date` для адреси і шле `POST /internal/outage-reason` (`x-api-key`).
-3. Бот надсилає повідомлення з рядком `⚠️ Причина: …`.
+1. Повідомлення про відключення надсилається одразу; бот зберігає його `message_id` в `outage_reason_lookup` і запускає workflow `outage-reason.yml` через `repository_dispatch`.
+2. Workflow (`scraper/`, Playwright — сайт ДТЕК за Incapsula) отримує `sub_type` для адреси і шле `POST /internal/outage-reason` (`x-api-key`).
+3. Якщо причина є — бот редагує повідомлення (`editMessageText`), додаючи рядок `⚠️ Причина: …`. Якщо ДТЕК її ще не опублікував — workflow перезапускається кожні `OUTAGE_REASON_CHECK_INTERVAL_MINUTES` (10 хв).
 
-Якщо відповіді немає за `OUTAGE_REASON_TIMEOUT_MINUTES` (3 хв), помилка скрейпера або dispatch не вдався — повідомлення йде без причини. Якщо світло повернулося раніше — спочатку надсилається відкладене повідомлення про відключення, потім про увімкнення. Повідомлення про увімкнення не змінюється.
+Перевірки зупиняються, коли причину знайдено, світло повернулося або минуло `OUTAGE_REASON_MAX_WAIT_MINUTES` (60 хв). Повідомлення про увімкнення не змінюється. Редагування не надсилає нового сповіщення в Telegram.
 
 GitHub Secrets для workflow:
 
@@ -82,7 +82,7 @@ GitHub Secrets для workflow:
 
 - `POST /internal/outage-reason`, заголовок `x-api-key: INTERNAL_CHECK_API_KEY`
 - body: `eventTime` (Unix, секунди), `status` (`found` / `no_outage` / `error`), `subType`, `startDate`, `endDate`, `error`
-- відповідь: `{ "ok": true, "applied": true|false }` (`false` — подія вже надіслана або застаріла)
+- відповідь: `{ "ok": true, "applied": true|false }` (`false` — причини ще немає, подія застаріла або вже оновлена)
 
 ## Telegram: треди
 
@@ -146,7 +146,8 @@ MONITOR_WEBHOOK_SECRET=long_random_string
 # Причина відключення з сайту ДТЕК (вимкнено, якщо не задано)
 GITHUB_DISPATCH_TOKEN=github_pat_xxx
 GITHUB_REPO=nmrhard/SvitloBot
-OUTAGE_REASON_TIMEOUT_MINUTES=3
+OUTAGE_REASON_CHECK_INTERVAL_MINUTES=10
+OUTAGE_REASON_MAX_WAIT_MINUTES=60
 # Домени UI через кому; поза production за замовчуванням http://localhost:4321
 CORS_ORIGINS=https://your-ui.netlify.app
 ```

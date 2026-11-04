@@ -16,7 +16,7 @@ concurrency:
 jobs:
   fetch-reason:
     runs-on: ubuntu-latest
-    # Bot sends message without reason after OUTAGE_REASON_TIMEOUT_MINUTES anyway
+    # Bot reruns workflow every OUTAGE_REASON_CHECK_INTERVAL_MINUTES, so one run should stay short
     timeout-minutes: 5
     defaults:
       run:
@@ -53,4 +53,5 @@ jobs:
           EVENT_TIME: ${{ github.event.client_payload.eventTime || inputs.event_time }}
           CALLBACK_URL: ${{ secrets.REASON_CALLBACK_URL }}
           CALLBACK_API_KEY: ${{ secrets.CHECK_API_KEY }}
+        timeout-minutes: 3
         run: node index.js

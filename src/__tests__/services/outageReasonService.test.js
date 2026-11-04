@@ -2,35 +2,52 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 process.env.GITHUB_DISPATCH_TOKEN = 'test-gh-token';
 process.env.GITHUB_REPO = 'owner/repo';
-process.env.OUTAGE_REASON_TIMEOUT_MINUTES = '3';
 
-import PendingOutage from '../../models/PendingOutage';
+import OutageReasonLookup from '../../models/OutageReasonLookup';
 import {
   buildReasonText,
-  flushPendingOutage,
   isOutageReasonEnabled,
-  queueOfflineMessage,
   resolveOutageReason,
-  restorePendingOutage,
+  restoreReasonLookup,
+  runReasonCheck,
+  startReasonLookup,
+  stopReasonLookup,
 } from '../../services/outageReasonService';
 
 const fetch = vi.fn();
-const sendMessage = vi.fn(async () => ({ ok: true }));
-const deps = { fetchClient: fetch, sendMessageFn: sendMessage };
+const editMessage = vi.fn(async () => ({ ok: true }));
 
 const OFFLINE_MESSAGE = '❌Світло вимкнули: <b>21.10.2026, 14:05</b>';
 const EVENT_TIME = 1792588000;
+const MESSAGE_ID = 42;
+
+function nowInSeconds() {
+  return Math.floor(Date.now() / 1000);
+}
+
+async function createLookup(overrides = {}) {
+  return OutageReasonLookup.create({
+    id: 1,
+    eventTime: EVENT_TIME,
+    messageId: MESSAGE_ID,
+    message: OFFLINE_MESSAGE,
+    nextCheckAt: nowInSeconds() + 600,
+    deadlineAt: nowInSeconds() + 3600,
+    ...overrides,
+  });
+}
 
 describe('outageReasonService', () => {
   beforeAll(async () => {
-    await PendingOutage.sync({ force: true });
+    await OutageReasonLookup.sync({ force: true });
   });
 
   beforeEach(async () => {
-    await PendingOutage.destroy({ where: {} });
+    await stopReasonLookup();
+    await OutageReasonLookup.destroy({ where: {} });
     fetch.mockReset();
     fetch.mockResolvedValue({ ok: true, status: 204 });
-    sendMessage.mockClear();
+    editMessage.mockClear();
   });
 
   afterEach(() => {
@@ -55,24 +72,9 @@ describe('outageReasonService', () => {
       expect(text).toBe('⚠️ Причина: <i>&lt;b&gt;x&lt;/b&gt; &amp; y</i>');
     });
 
-    it('should add nothing when DTEK gives dates without reason', () => {
-      const text = buildReasonText({
-        status: 'found',
-        subType: null,
-        startDate: '14:05 21.10.2026',
-        endDate: null,
-      });
-
-      expect(text).toBe('');
-    });
-
-    it('should report when DTEK has no outage for address', () => {
-      expect(buildReasonText({ status: 'no_outage' })).toBe(
-        'ℹ️ ДТЕК не повідомляє про відключення за цією адресою',
-      );
-    });
-
-    it('should add nothing on scraper error', () => {
+    it('should add nothing when DTEK has no reason yet', () => {
+      expect(buildReasonText({ status: 'found', subType: null, startDate: '14:05 21.10.2026' })).toBe('');
+      expect(buildReasonText({ status: 'no_outage' })).toBe('');
       expect(buildReasonText({ status: 'error', error: 'timeout' })).toBe('');
     });
   });
@@ -81,14 +83,14 @@ describe('outageReasonService', () => {
     expect(isOutageReasonEnabled()).toBe(true);
   });
 
-  describe('queueOfflineMessage', () => {
-    it('should store pending message and trigger GitHub dispatch', async () => {
-      await queueOfflineMessage(OFFLINE_MESSAGE, EVENT_TIME, undefined, deps);
+  describe('startReasonLookup', () => {
+    it('should store sent message and trigger GitHub dispatch', async () => {
+      await startReasonLookup(OFFLINE_MESSAGE, EVENT_TIME, MESSAGE_ID, undefined, { fetchClient: fetch });
 
-      const pending = await PendingOutage.findByPk(1);
-      expect(pending.eventTime).toBe(EVENT_TIME);
-      expect(pending.message).toBe(OFFLINE_MESSAGE);
-      expect(sendMessage).not.toHaveBeenCalled();
+      const lookup = await OutageReasonLookup.findByPk(1);
+      expect(lookup.eventTime).toBe(EVENT_TIME);
+      expect(lookup.messageId).toBe(MESSAGE_ID);
+      expect(lookup.deadlineAt - lookup.nextCheckAt).toBe(3600 - 600);
 
       const [url, options] = fetch.mock.calls[0];
       expect(url).toBe('https://api.github.com/repos/owner/repo/dispatches');
@@ -99,104 +101,119 @@ describe('outageReasonService', () => {
       });
     });
 
-    it('should send message immediately when dispatch fails', async () => {
+    it('should skip lookup when offline message was not sent', async () => {
+      await startReasonLookup(OFFLINE_MESSAGE, EVENT_TIME, undefined, undefined, { fetchClient: fetch });
+
+      expect(fetch).not.toHaveBeenCalled();
+      expect(await OutageReasonLookup.findByPk(1)).toBeNull();
+    });
+
+    it('should keep lookup active when dispatch fails', async () => {
       fetch.mockResolvedValueOnce({ ok: false, status: 401 });
 
-      await queueOfflineMessage(OFFLINE_MESSAGE, EVENT_TIME, undefined, deps);
+      await startReasonLookup(OFFLINE_MESSAGE, EVENT_TIME, MESSAGE_ID, undefined, { fetchClient: fetch });
 
-      expect(sendMessage).toHaveBeenCalledWith(OFFLINE_MESSAGE, undefined);
-      expect((await PendingOutage.findByPk(1)).eventTime).toBeNull();
+      expect((await OutageReasonLookup.findByPk(1)).eventTime).toBe(EVENT_TIME);
     });
 
-    it('should flush previous pending message before queuing new one', async () => {
-      await queueOfflineMessage('first', EVENT_TIME, undefined, deps);
-      await queueOfflineMessage('second', EVENT_TIME + 60, undefined, deps);
-
-      expect(sendMessage).toHaveBeenCalledTimes(1);
-      expect(sendMessage).toHaveBeenCalledWith('first', undefined);
-      expect((await PendingOutage.findByPk(1)).message).toBe('second');
-    });
-
-    it('should send message without reason after timeout', async () => {
+    it('should rerun scraper after check interval', async () => {
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
 
-      await queueOfflineMessage(OFFLINE_MESSAGE, EVENT_TIME, undefined, deps);
-      await vi.advanceTimersByTimeAsync(3 * 60 * 1000);
-      await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledWith(OFFLINE_MESSAGE, undefined));
+      await startReasonLookup(OFFLINE_MESSAGE, EVENT_TIME, MESSAGE_ID, undefined, { fetchClient: fetch });
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    });
+  });
+
+  describe('runReasonCheck', () => {
+    it('should stop lookup after deadline', async () => {
+      await createLookup({ deadlineAt: nowInSeconds() - 1 });
+
+      await runReasonCheck(undefined, { fetchClient: fetch });
+
+      expect(fetch).not.toHaveBeenCalled();
+      expect((await OutageReasonLookup.findByPk(1)).eventTime).toBeNull();
     });
   });
 
   describe('resolveOutageReason', () => {
-    it('should send pending message with reason only once', async () => {
-      await queueOfflineMessage(OFFLINE_MESSAGE, EVENT_TIME, undefined, deps);
+    it('should edit sent message with reason only once', async () => {
+      await createLookup();
       const result = { eventTime: EVENT_TIME, status: 'found', subType: 'Аварійне відключення' };
 
-      const first = await resolveOutageReason(result, undefined, deps);
-      const second = await resolveOutageReason(result, undefined, deps);
+      const first = await resolveOutageReason(result, undefined, { editMessageFn: editMessage });
+      const second = await resolveOutageReason(result, undefined, { editMessageFn: editMessage });
 
       expect(first).toBe(true);
       expect(second).toBe(false);
-      expect(sendMessage).toHaveBeenCalledTimes(1);
-      expect(sendMessage).toHaveBeenCalledWith(
+      expect(editMessage).toHaveBeenCalledTimes(1);
+      expect(editMessage).toHaveBeenCalledWith(
+        MESSAGE_ID,
         `${OFFLINE_MESSAGE}\n⚠️ Причина: <i>Аварійне відключення</i>`,
         undefined,
       );
+      expect((await OutageReasonLookup.findByPk(1)).eventTime).toBeNull();
+    });
+
+    it('should keep polling when DTEK has no reason yet', async () => {
+      await createLookup();
+
+      const applied = await resolveOutageReason(
+        { eventTime: EVENT_TIME, status: 'no_outage' },
+        undefined,
+        { editMessageFn: editMessage },
+      );
+
+      expect(applied).toBe(false);
+      expect(editMessage).not.toHaveBeenCalled();
+      expect((await OutageReasonLookup.findByPk(1)).eventTime).toBe(EVENT_TIME);
     });
 
     it('should ignore callback for another event', async () => {
-      await queueOfflineMessage(OFFLINE_MESSAGE, EVENT_TIME, undefined, deps);
+      await createLookup();
 
-      const applied = await resolveOutageReason({ eventTime: EVENT_TIME - 1, status: 'found' }, undefined, deps);
-
-      expect(applied).toBe(false);
-      expect(sendMessage).not.toHaveBeenCalled();
-    });
-
-    it('should send plain message on scraper error', async () => {
-      await queueOfflineMessage(OFFLINE_MESSAGE, EVENT_TIME, undefined, deps);
-
-      await resolveOutageReason({ eventTime: EVENT_TIME, status: 'error', error: 'blocked' }, undefined, deps);
-
-      expect(sendMessage).toHaveBeenCalledWith(OFFLINE_MESSAGE, undefined);
-    });
-
-    it('should not send after message was already flushed by online event', async () => {
-      await queueOfflineMessage(OFFLINE_MESSAGE, EVENT_TIME, undefined, deps);
-      await flushPendingOutage(undefined, deps);
-
-      const applied = await resolveOutageReason({ eventTime: EVENT_TIME, status: 'found' }, undefined, deps);
+      const applied = await resolveOutageReason(
+        { eventTime: EVENT_TIME - 1, status: 'found', subType: 'Аварійне' },
+        undefined,
+        { editMessageFn: editMessage },
+      );
 
       expect(applied).toBe(false);
-      expect(sendMessage).toHaveBeenCalledTimes(1);
+      expect(editMessage).not.toHaveBeenCalled();
+    });
+
+    it('should not edit after light is back', async () => {
+      await createLookup();
+      await stopReasonLookup();
+
+      const applied = await resolveOutageReason(
+        { eventTime: EVENT_TIME, status: 'found', subType: 'Аварійне' },
+        undefined,
+        { editMessageFn: editMessage },
+      );
+
+      expect(applied).toBe(false);
+      expect(editMessage).not.toHaveBeenCalled();
     });
   });
 
-  describe('restorePendingOutage', () => {
-    it('should send message when deadline already passed', async () => {
-      await PendingOutage.create({
-        id: 1,
-        eventTime: EVENT_TIME,
-        message: OFFLINE_MESSAGE,
-        deadlineAt: Math.floor(Date.now() / 1000) - 10,
-      });
+  describe('restoreReasonLookup', () => {
+    it('should run check immediately when it is overdue', async () => {
+      await createLookup({ nextCheckAt: nowInSeconds() - 10 });
 
-      await restorePendingOutage(undefined, deps);
+      await restoreReasonLookup(undefined, { fetchClient: fetch });
 
-      expect(sendMessage).toHaveBeenCalledWith(OFFLINE_MESSAGE, undefined);
+      expect(fetch).toHaveBeenCalledTimes(1);
     });
 
-    it('should keep waiting when deadline is in future', async () => {
-      await PendingOutage.create({
-        id: 1,
-        eventTime: EVENT_TIME,
-        message: OFFLINE_MESSAGE,
-        deadlineAt: Math.floor(Date.now() / 1000) + 120,
-      });
+    it('should wait for scheduled check', async () => {
+      await createLookup();
 
-      await restorePendingOutage(undefined, deps);
+      await restoreReasonLookup(undefined, { fetchClient: fetch });
 
-      expect(sendMessage).not.toHaveBeenCalled();
-      expect((await PendingOutage.findByPk(1)).eventTime).toBe(EVENT_TIME);
+      expect(fetch).not.toHaveBeenCalled();
+      expect((await OutageReasonLookup.findByPk(1)).eventTime).toBe(EVENT_TIME);
     });
   });
 });

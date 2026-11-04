@@ -13,13 +13,13 @@ vi.mock('../../services', () => ({
 }));
 
 import { buildApp } from '../../app';
-import PendingOutage from '../../models/PendingOutage';
+import OutageReasonLookup from '../../models/OutageReasonLookup';
 
 describe('Internal Routes', () => {
   let app;
 
   beforeAll(async () => {
-    await PendingOutage.sync({ force: true });
+    await OutageReasonLookup.sync({ force: true });
     app = await buildApp();
     await app.ready();
   });
@@ -55,7 +55,7 @@ describe('Internal Routes', () => {
   });
 
   describe('POST /internal/outage-reason', () => {
-    const payload = { eventTime: 1729699200, status: 'error', error: 'blocked' };
+    const payload = { eventTime: 1729699200, status: 'found', subType: 'Аварійне відключення' };
 
     it('should reject request without API key', async () => {
       const response = await app.inject({
@@ -78,12 +78,14 @@ describe('Internal Routes', () => {
       expect(response.statusCode).toBe(400);
     });
 
-    it('should apply reason to matching pending message', async () => {
-      await PendingOutage.upsert({
+    it('should apply reason to matching offline message', async () => {
+      await OutageReasonLookup.upsert({
         id: 1,
+        messageId: 42,
+        nextCheckAt: Math.floor(Date.now() / 1000) + 600,
         eventTime: 1729699200,
-        message: 'pending offline message',
-        deadlineAt: Math.floor(Date.now() / 1000) + 180,
+        message: 'offline message',
+        deadlineAt: Math.floor(Date.now() / 1000) + 3600,
       });
 
       const response = await app.inject({
@@ -95,7 +97,7 @@ describe('Internal Routes', () => {
 
       expect(response.statusCode).toBe(200);
       expect(response.json()).toEqual({ ok: true, applied: true });
-      expect((await PendingOutage.findByPk(1)).eventTime).toBeNull();
+      expect((await OutageReasonLookup.findByPk(1)).eventTime).toBeNull();
     });
 
     it('should report stale callback as not applied', async () => {

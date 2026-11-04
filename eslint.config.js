@@ -55,6 +55,7 @@ module.exports = [
       globals: {
         fetch: 'readonly',
         URLSearchParams: 'readonly',
+        AbortSignal: 'readonly',
       },
     },
   },

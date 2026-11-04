@@ -1,16 +1,17 @@
 const fetch = require('node-fetch');
 
-const { PendingOutage } = require('../models');
+const { OutageReasonLookup } = require('../models');
 const {
   GITHUB_DISPATCH_TOKEN,
   GITHUB_REPO,
-  OUTAGE_REASON_TIMEOUT_MINUTES,
+  OUTAGE_REASON_CHECK_INTERVAL_MINUTES,
+  OUTAGE_REASON_MAX_WAIT_MINUTES,
 } = require('../config/constants');
-const { sendMessage } = require('./telegramService');
+const { editMessage } = require('./telegramService');
 
 const DISPATCH_EVENT_TYPE = 'outage-reason';
 
-let flushTimer = null;
+let checkTimer = null;
 
 function getDispatchConfig() {
   return {
@@ -32,6 +33,10 @@ function nowInSeconds() {
   return Math.floor(Date.now() / 1000);
 }
 
+function getCheckIntervalSeconds() {
+  return Math.round(OUTAGE_REASON_CHECK_INTERVAL_MINUTES * 60);
+}
+
 function escapeHtml(value) {
   return String(value)
     .replace(/&/g, '&amp;')
@@ -46,13 +51,9 @@ function capitalizeFirst(value) {
 /**
  * Build reason line appended to offline message
  * @param {object} result - Scraper callback payload
- * @returns {string} HTML text or empty string when nothing to add
+ * @returns {string} HTML text or empty string when DTEK has no reason yet
  */
 function buildReasonText({ status, subType }) {
-  if (status === 'no_outage') {
-    return 'ℹ️ ДТЕК не повідомляє про відключення за цією адресою';
-  }
-
   if (status !== 'found' || !subType) {
     return '';
   }
@@ -86,141 +87,157 @@ async function triggerReasonLookup(eventTime, fetchClient = fetch) {
   }
 }
 
-function clearFlushTimer() {
-  if (flushTimer) {
-    clearTimeout(flushTimer);
-    flushTimer = null;
+function clearCheckTimer() {
+  if (checkTimer) {
+    clearTimeout(checkTimer);
+    checkTimer = null;
+  }
+}
+
+function scheduleCheck(delayMs, logger, fetchClient) {
+  clearCheckTimer();
+  checkTimer = setTimeout(() => {
+    checkTimer = null;
+    runReasonCheck(logger, { fetchClient }).catch((error) => {
+      logger?.error('Error running outage reason check:', error.message);
+    });
+  }, Math.max(delayMs, 0));
+  checkTimer.unref?.();
+}
+
+/**
+ * Stop waiting for DTEK reason (light is back or lookup finished)
+ * @param {object} logger - Fastify logger instance
+ */
+async function stopReasonLookup(logger) {
+  clearCheckTimer();
+  const [affected] = await OutageReasonLookup.update(
+    { eventTime: null, messageId: null, message: null, nextCheckAt: null, deadlineAt: null },
+    { where: { id: 1 } },
+  );
+  if (affected) {
+    logger?.info('Outage reason lookup stopped');
   }
 }
 
 /**
- * Atomically take pending message so timeout and callback never both send it
- * @param {number} [eventTime] - Only claim if pending event matches
- * @returns {Promise<string|null>} Pending message or null
- */
-async function claimPendingOutage(eventTime) {
-  const pending = await PendingOutage.findByPk(1);
-  if (!pending?.eventTime) return null;
-  if (eventTime !== undefined && pending.eventTime !== eventTime) return null;
-
-  const [affected] = await PendingOutage.update(
-    { eventTime: null, message: null, deadlineAt: null },
-    { where: { id: 1, eventTime: pending.eventTime } },
-  );
-
-  return affected ? pending.message : null;
-}
-
-/**
- * Send pending offline message without reason
- * @param {object} logger - Fastify logger instance
- * @param {object} options - Optional parameters
- * @param {number} options.eventTime - Only flush if pending event matches
- * @param {Function} options.sendMessageFn - Telegram send implementation
- * @returns {Promise<boolean>} True if message was sent
- */
-async function flushPendingOutage(logger, { eventTime, sendMessageFn = sendMessage } = {}) {
-  const message = await claimPendingOutage(eventTime);
-  if (!message) return false;
-
-  clearFlushTimer();
-  logger?.warn('Sending offline message without DTEK reason');
-  await sendMessageFn(message, logger);
-  return true;
-}
-
-function scheduleFlush(eventTime, delayMs, logger, sendMessageFn) {
-  clearFlushTimer();
-  flushTimer = setTimeout(() => {
-    flushTimer = null;
-    flushPendingOutage(logger, { eventTime, sendMessageFn }).catch((error) => {
-      logger?.error('Error flushing pending outage:', error.message);
-    });
-  }, Math.max(delayMs, 0));
-  flushTimer.unref?.();
-}
-
-/**
- * Hold offline message until DTEK reason arrives (or timeout passes)
- * @param {string} message - Offline status message
- * @param {number} eventTime - Offline event UNIX timestamp
+ * Run scraper once and schedule next run until deadline
  * @param {object} logger - Fastify logger instance
  * @param {object} options - Optional parameters
  * @param {Function} options.fetchClient - fetch implementation
- * @param {Function} options.sendMessageFn - Telegram send implementation
  */
-async function queueOfflineMessage(
-  message,
-  eventTime,
-  logger,
-  { fetchClient = fetch, sendMessageFn = sendMessage } = {},
-) {
-  // Previous offline event must not be lost or sent after this one
-  await flushPendingOutage(logger, { sendMessageFn });
+async function runReasonCheck(logger, { fetchClient = fetch } = {}) {
+  const lookup = await OutageReasonLookup.findByPk(1);
+  if (!lookup?.eventTime) return;
 
-  const timeoutSeconds = Math.round(OUTAGE_REASON_TIMEOUT_MINUTES * 60);
-  await PendingOutage.upsert({
-    id: 1,
-    eventTime,
-    message,
-    deadlineAt: nowInSeconds() + timeoutSeconds,
-  });
-
-  try {
-    await triggerReasonLookup(eventTime, fetchClient);
-  } catch (error) {
-    logger?.error('Error triggering DTEK reason lookup:', error.message);
-    await flushPendingOutage(logger, { eventTime, sendMessageFn });
+  const now = nowInSeconds();
+  if (now >= lookup.deadlineAt) {
+    logger?.warn(`DTEK reason not found for event ${lookup.eventTime}, giving up`);
+    await stopReasonLookup(logger);
     return;
   }
 
-  scheduleFlush(eventTime, timeoutSeconds * 1000, logger, sendMessageFn);
+  const intervalSeconds = getCheckIntervalSeconds();
+  await lookup.update({ nextCheckAt: now + intervalSeconds });
+
+  try {
+    await triggerReasonLookup(lookup.eventTime, fetchClient);
+  } catch (error) {
+    // Next scheduled check will retry dispatch
+    logger?.error('Error triggering DTEK reason lookup:', error.message);
+  }
+
+  scheduleCheck(intervalSeconds * 1000, logger, fetchClient);
 }
 
 /**
- * Send pending offline message with reason from scraper callback
+ * Start polling DTEK reason for already sent offline message
+ * @param {string} message - Offline status message (HTML)
+ * @param {number} eventTime - Offline event UNIX timestamp
+ * @param {number} messageId - Telegram message_id of sent offline message
+ * @param {object} logger - Fastify logger instance
+ * @param {object} options - Optional parameters
+ * @param {Function} options.fetchClient - fetch implementation
+ */
+async function startReasonLookup(
+  message,
+  eventTime,
+  messageId,
+  logger,
+  { fetchClient = fetch } = {},
+) {
+  if (!messageId) {
+    logger?.warn('Offline message was not sent, skipping DTEK reason lookup');
+    return;
+  }
+
+  const now = nowInSeconds();
+  await OutageReasonLookup.upsert({
+    id: 1,
+    eventTime,
+    messageId,
+    message,
+    nextCheckAt: now,
+    deadlineAt: now + Math.round(OUTAGE_REASON_MAX_WAIT_MINUTES * 60),
+  });
+
+  await runReasonCheck(logger, { fetchClient });
+}
+
+/**
+ * Add DTEK reason to sent offline message
  * @param {object} result - { eventTime, status, subType, startDate, endDate }
  * @param {object} logger - Fastify logger instance
  * @param {object} options - Optional parameters
- * @param {Function} options.sendMessageFn - Telegram send implementation
- * @returns {Promise<boolean>} False if no matching pending message (stale/late callback)
+ * @param {Function} options.editMessageFn - Telegram edit implementation
+ * @returns {Promise<boolean>} True if message was updated
  */
-async function resolveOutageReason(result, logger, { sendMessageFn = sendMessage } = {}) {
-  const message = await claimPendingOutage(result.eventTime);
-  if (!message) return false;
-
-  clearFlushTimer();
+async function resolveOutageReason(result, logger, { editMessageFn = editMessage } = {}) {
   const reasonText = buildReasonText(result);
-  await sendMessageFn(reasonText ? `${message}\n${reasonText}` : message, logger);
+  // No reason yet: keep polling on schedule
+  if (!reasonText) return false;
+
+  const lookup = await OutageReasonLookup.findByPk(1);
+  if (!lookup?.eventTime || lookup.eventTime !== result.eventTime) return false;
+
+  // Atomically finish lookup so duplicate callbacks never edit twice
+  const [affected] = await OutageReasonLookup.update(
+    { eventTime: null, messageId: null, message: null, nextCheckAt: null, deadlineAt: null },
+    { where: { id: 1, eventTime: lookup.eventTime } },
+  );
+  if (!affected) return false;
+
+  clearCheckTimer();
+  await editMessageFn(lookup.messageId, `${lookup.message}\n${reasonText}`, logger);
   return true;
 }
 
 /**
- * Re-arm timeout after restart, or send message if deadline already passed
+ * Re-arm polling after restart (or when timer was lost)
  * @param {object} logger - Fastify logger instance
  * @param {object} options - Optional parameters
- * @param {Function} options.sendMessageFn - Telegram send implementation
+ * @param {Function} options.fetchClient - fetch implementation
  */
-async function restorePendingOutage(logger, { sendMessageFn = sendMessage } = {}) {
-  const pending = await PendingOutage.findByPk(1);
-  if (!pending?.eventTime) return;
+async function restoreReasonLookup(logger, { fetchClient = fetch } = {}) {
+  const lookup = await OutageReasonLookup.findByPk(1);
+  if (!lookup?.eventTime) return;
 
-  const delayMs = (pending.deadlineAt - nowInSeconds()) * 1000;
+  const delayMs = (lookup.nextCheckAt - nowInSeconds()) * 1000;
   if (delayMs <= 0) {
-    await flushPendingOutage(logger, { eventTime: pending.eventTime, sendMessageFn });
+    await runReasonCheck(logger, { fetchClient });
     return;
   }
 
-  scheduleFlush(pending.eventTime, delayMs, logger, sendMessageFn);
+  scheduleCheck(delayMs, logger, fetchClient);
 }
 
 module.exports = {
   buildReasonText,
-  claimPendingOutage,
-  flushPendingOutage,
   isOutageReasonEnabled,
-  queueOfflineMessage,
   resolveOutageReason,
-  restorePendingOutage,
+  restoreReasonLookup,
+  runReasonCheck,
+  startReasonLookup,
+  stopReasonLookup,
   triggerReasonLookup,
 };

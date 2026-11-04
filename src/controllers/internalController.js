@@ -2,7 +2,7 @@ const { INTERNAL_CHECK_API_KEY } = require('../config/constants');
 const {
   processWindowCheck,
   resolveOutageReason,
-  restorePendingOutage,
+  restoreReasonLookup,
 } = require('../services');
 const { secureCompare } = require('../utils/secureCompare');
 
@@ -36,11 +36,11 @@ function authorizeInternalRequest(request, reply) {
 async function runDailyCheck(request, reply) {
   if (!authorizeInternalRequest(request, reply)) return;
 
-  // Safety net: send offline message whose reason timeout was lost on restart
+  // Safety net: resume DTEK reason polling if its timer was lost on restart
   try {
-    await restorePendingOutage(request.log);
+    await restoreReasonLookup(request.log);
   } catch (error) {
-    request.log.error('Error restoring pending outage:', error.message);
+    request.log.error('Error restoring outage reason lookup:', error.message);
   }
 
   const windowInfo = await processWindowCheck(request.log);
@@ -70,7 +70,7 @@ async function handleOutageReason(request, reply) {
 
   const applied = await resolveOutageReason(request.body, request.log);
   if (!applied) {
-    request.log.warn(`No pending offline message for event ${request.body.eventTime}`);
+    request.log.info(`DTEK reason not applied for event ${request.body.eventTime} (${request.body.status})`);
   }
 
   reply.send({ ok: true, applied });
