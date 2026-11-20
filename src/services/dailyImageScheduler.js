@@ -529,13 +529,16 @@ async function processWindowCheck(
       }
 
       const todayHash = buildGroupHash(today.groupData);
+      // Yesterday's final check told users "no outages" or "schedule missing" for today
+      const wasPromisedNoOutages =
+        persistentState?.tomorrowDateKey === today.targetDateKey &&
+        Boolean(persistentState?.tomorrowHash);
 
       if (
         !state.hasSentTodayInitial &&
-        persistentState?.tomorrowDateKey === today.targetDateKey &&
-        persistentState?.tomorrowHash &&
-        persistentState.tomorrowHash !== todayHash &&
-        persistentState.missingNoticeDateKey === today.targetDateKey
+        persistentState?.missingNoticeDateKey === today.targetDateKey &&
+        (!wasPromisedNoOutages || persistentState.tomorrowHash !== todayHash) &&
+        validateGroupData(today.groupData).isValid
       ) {
         const todayHasOutages = hasNonYesValues(today.groupData);
         if (todayHasOutages) {
@@ -544,7 +547,9 @@ async function processWindowCheck(
             dailyPngUrl,
             now.getTime(),
           );
-          const caption = `⚠️ Графік на ${state.currentTodayDateLabel} ЗМІНЕНО - з'явилися відключення! Станом на ${formattedTime}`;
+          const caption = wasPromisedNoOutages
+            ? `⚠️ Графік на ${state.currentTodayDateLabel} ЗМІНЕНО - з'явилися відключення! Станом на ${formattedTime}`
+            : `⚠️ З'явився графік відключень на ${state.currentTodayDateLabel}! Станом на ${formattedTime}`;
           const response = await runWithRetry(
             () =>
               sendPhotoFn(photoPayload, caption, logger, {

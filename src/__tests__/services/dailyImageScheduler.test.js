@@ -759,6 +759,106 @@ describe('dailyImageScheduler', () => {
     );
   });
 
+  describe('when yesterday reported today schedule as missing', () => {
+    const missingNoticeConfig = {
+      chatId: '123',
+      checkEndHour: 21,
+      checkEndMinute: 0,
+      checkIntervalMinutes: 30,
+      checkStartHour: 18,
+      checkStartMinute: 0,
+      dailyGroupKey: 'GPV5.1',
+      dailyJsonUrl: 'https://example.com/schedule.json',
+      dailyPngUrl: 'https://example.com/graph.png',
+      dailyThreadId: '456',
+      jsonMaxAgeHours: 24,
+      requireNonYesValues: true,
+      sendTodayInitial: false,
+      timezone: 'Europe/Kyiv',
+    };
+
+    function runCheck(state, todayGroupData, saveStateMock) {
+      fetchMock.mockResolvedValue({
+        json: vi.fn(() =>
+          Promise.resolve(
+            buildScheduleJson(null, '2026-02-19T08:00:00.000Z', todayGroupData),
+          ),
+        ),
+        ok: true,
+      });
+
+      return processWindowCheck(logger, state, {
+        config: missingNoticeConfig,
+        fetchClient: fetchMock,
+        fetchPngBinaryFn: fetchPngBinaryMock,
+        now: new Date('2026-02-19T08:05:00Z'),
+        sendMessageFn: sendMessageMock,
+        sendPhotoFn: sendPhotoMock,
+        stateStore: {
+          // Missing notice saves only missingNoticeDateKey; tomorrow* stays from the day before
+          getState: vi.fn(() =>
+            Promise.resolve({
+              missingNoticeDateKey: '2026-02-19',
+              todayDateKey: '2026-02-18',
+              todayHash: 'old-today-hash',
+              tomorrowDateKey: '2026-02-18',
+              tomorrowHash: 'old-tomorrow-hash',
+            }),
+          ),
+          saveState: saveStateMock,
+        },
+      });
+    }
+
+    it('should notify when today schedule with outages appears', async () => {
+      // Arrange
+      const state = createDailyState();
+      const saveStateMock = vi.fn(() => Promise.resolve());
+
+      // Act
+      await runCheck(state, buildGroupDataWithOutage(), saveStateMock);
+
+      // Assert
+      expect(sendPhotoMock).toHaveBeenCalledTimes(1);
+      expect(sendPhotoMock.mock.calls[0][1]).toContain(
+        'З\'явився графік відключень на 19.02.2026',
+      );
+      expect(saveStateMock).toHaveBeenCalledWith(
+        logger,
+        expect.objectContaining({
+          missingNoticeDateKey: null,
+          todayDateKey: '2026-02-19',
+          todayHash: buildGroupHash(buildGroupDataWithOutage()),
+        }),
+      );
+    });
+
+    it('should not notify while today schedule is still absent', async () => {
+      // Arrange
+      const state = createDailyState();
+      const saveStateMock = vi.fn(() => Promise.resolve());
+
+      // Act
+      await runCheck(state, null, saveStateMock);
+
+      // Assert
+      expect(sendPhotoMock).not.toHaveBeenCalled();
+      expect(logger.error).not.toHaveBeenCalled();
+    });
+
+    it('should not notify when today schedule appears without outages', async () => {
+      // Arrange
+      const state = createDailyState();
+      const saveStateMock = vi.fn(() => Promise.resolve());
+
+      // Act
+      await runCheck(state, buildFullGroupData('yes'), saveStateMock);
+
+      // Assert
+      expect(sendPhotoMock).not.toHaveBeenCalled();
+    });
+  });
+
   it('should notify when today outages schedule changes during the day', async () => {
     // Arrange
     const state = createDailyState();
